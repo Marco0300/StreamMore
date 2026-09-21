@@ -2034,6 +2034,7 @@ internal fun PlayerScreen(
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
     var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
     var nextStarted by remember(source, nextEpisode) { mutableStateOf(false) }
+    var nextActionFocused by remember(source, nextEpisode) { mutableStateOf("play") }
     var playbackPosition by remember(source) { mutableStateOf(0L) }
     var playbackDuration by remember(source) { mutableStateOf(0L) }
     var isPlaying by remember(source) { mutableStateOf(true) }
@@ -2217,6 +2218,7 @@ internal fun PlayerScreen(
 
     LaunchedEffect(nextPromptVisible, nextEpisode) {
         if (nextPromptVisible && nextEpisode != null && !nextPromptDismissed) {
+            nextActionFocused = "play"
             repeat(4) {
                 withFrameNanos { }
                 delay(80)
@@ -2274,7 +2276,16 @@ internal fun PlayerScreen(
             .focusable()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
+                if (event.type == KeyEventType.KeyDown && nextPromptVisible && nextEpisode != null && !nextPromptDismissed && event.key in setOf(Key.DirectionCenter, Key.Enter)) {
+                    if (nextActionFocused == "close") {
+                        nextPromptDismissed = true
+                        nextPromptVisible = false
+                    } else if (!nextStarted) {
+                        nextStarted = true
+                        onPlayNext(nextEpisode)
+                    }
+                    true
+                } else if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
                     player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
                     chromeVisible = true
                     interactionTick++
@@ -2555,6 +2566,7 @@ internal fun PlayerScreen(
                             modifier = Modifier
                                 .focusRequester(nextFocus)
                                 .focusProperties { right = nextCloseFocus },
+                            onFocusGained = { nextActionFocused = "play" },
                         ) {
                             Text("▶ Play next", fontSize = 14.sp)
                         }
@@ -2566,6 +2578,7 @@ internal fun PlayerScreen(
                             modifier = Modifier
                                 .focusRequester(nextCloseFocus)
                                 .focusProperties { left = nextFocus },
+                            onFocusGained = { nextActionFocused = "close" },
                         ) {
                             Text("Close", color = TextPrimary, fontSize = 14.sp)
                         }
