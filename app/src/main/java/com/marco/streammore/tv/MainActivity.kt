@@ -1,5 +1,6 @@
 package com.marco.streammore.tv
 
+import android.app.Activity
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Bundle
@@ -1783,6 +1784,14 @@ internal fun PlayerScreen(
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
+    val activity = context as? Activity
+    DisposableEffect(Unit) {
+        activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
     var playerError by remember(source) { mutableStateOf<String?>(null) }
     var chromeVisible by remember(source) { mutableStateOf(false) }
     var interactionTick by remember(source) { mutableStateOf(0) }
