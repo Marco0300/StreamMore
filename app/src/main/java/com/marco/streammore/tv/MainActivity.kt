@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -1767,12 +1768,14 @@ internal fun PlayerScreen(
     var playbackPosition by remember(source) { mutableStateOf(0L) }
     var playbackDuration by remember(source) { mutableStateOf(0L) }
     var isPlaying by remember(source) { mutableStateOf(true) }
-    var volume by remember(source) { mutableStateOf(1f) }
     var skipLabel by remember(source) { mutableStateOf<String?>(null) }
     var skipTargetMs by remember(source) { mutableStateOf<Long?>(null) }
     val qualityFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val playerFocus = remember(source) { FocusRequester() }
+    val playFocus = remember(source) { FocusRequester() }
+    val seekFocus = remember(source) { FocusRequester() }
+    val episodeFocus = remember(source) { FocusRequester() }
     val trackSelector = remember(source) { DefaultTrackSelector(context) }
     val player = remember(source, trackSelector) {
         // Subtitle files come from the authenticated /api/subtitles/file route, so
@@ -1866,13 +1869,20 @@ internal fun PlayerScreen(
 
     LaunchedEffect(source) {
         delay(700)
-        if (chromeVisible) qualityFocus.requestFocus()
+        if (chromeVisible) playFocus.requestFocus()
     }
 
     LaunchedEffect(chromeVisible) {
         if (chromeVisible) {
             delay(80)
-            qualityFocus.requestFocus()
+            playFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(episodeMenuOpen) {
+        if (episodeMenuOpen && episodeList.isNotEmpty()) {
+            delay(80)
+            episodeFocus.requestFocus()
         }
     }
 
@@ -1898,8 +1908,8 @@ internal fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen) {
-        if (chromeVisible && !qualityMenuOpen) {
+    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen, subtitleMenuOpen, sourceMenuOpen, episodeMenuOpen, settingsMenuOpen) {
+        if (chromeVisible && !qualityMenuOpen && !subtitleMenuOpen && !sourceMenuOpen && !episodeMenuOpen && !settingsMenuOpen) {
             delay(5_000)
             chromeVisible = false
         }
@@ -1942,6 +1952,13 @@ internal fun PlayerScreen(
         }
     }
     BackHandler(onBack = onBack)
+
+    fun keepControlsVisible(modifier: Modifier = Modifier): Modifier = modifier.onFocusChanged {
+        if (it.isFocused) {
+            chromeVisible = true
+            interactionTick++
+        }
+    }
 
     Box(
         Modifier
@@ -2037,26 +2054,30 @@ internal fun PlayerScreen(
                             activeTrackColor = Purple,
                             inactiveTrackColor = Color.White.copy(alpha = 0.28f),
                         ),
-                        modifier = Modifier.fillMaxWidth().height(24.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(24.dp)
+                            .focusRequester(seekFocus)
+                            .focusProperties { down = playFocus }
+                            .onFocusChanged { if (it.isFocused) { chromeVisible = true; interactionTick++ } },
                     )
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { player.playWhenReady = !player.isPlaying }) {
+                    TextButton(
+                        onClick = { player.playWhenReady = !player.isPlaying },
+                        modifier = Modifier
+                            .focusRequester(playFocus)
+                            .focusProperties { up = seekFocus }
+                            .onFocusChanged { if (it.isFocused) { chromeVisible = true; interactionTick++ } },
+                    ) {
                         Text(if (isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 25.sp)
                     }
-                    TextButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
+                    TextButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = keepControlsVisible()) {
                         Text("↶10", color = Color.White, fontSize = 15.sp)
                     }
-                    TextButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }) {
+                    TextButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }, modifier = keepControlsVisible()) {
                         Text("10↷", color = Color.White, fontSize = 15.sp)
                     }
-                    Text("🔊", color = Color.White, fontSize = 15.sp)
-                    Slider(
-                        value = volume,
-                        onValueChange = { value -> volume = value; player.volume = value },
-                        colors = SliderDefaults.colors(thumbColor = Purple, activeTrackColor = Purple, inactiveTrackColor = Color.White.copy(alpha = 0.28f)),
-                        modifier = Modifier.width(92.dp).height(24.dp),
-                    )
                     Text(
                         "${formatPlayerTime(playbackPosition)} / ${formatPlayerTime(playbackDuration)}",
                         color = Color(0xFFE0DCE6),
@@ -2069,7 +2090,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             sourceMenuOpen = false
                             episodeMenuOpen = false
-                        }) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
                     }
                     if (sources.size > 1) {
                         TextButton(onClick = {
@@ -2077,7 +2098,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             episodeMenuOpen = false
-                        }) { Text("☰ Sources", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { Text("☰ Sources", color = Color.White, fontSize = 13.sp) }
                     }
                     if (episodeList.isNotEmpty()) {
                         TextButton(onClick = {
@@ -2085,16 +2106,16 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             sourceMenuOpen = false
-                        }) { Text("▣ Episodes", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { Text("▣ Episodes", color = Color.White, fontSize = 13.sp) }
                     }
                     if (season != null && episode != null) {
                         TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = 13.sp) }
                     }
                     TvButton(
                         onClick = { qualityMenuOpen = !qualityMenuOpen },
-                        modifier = Modifier.focusRequester(qualityFocus),
+                        modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus)),
                     ) { Text("▦ ${selectedQuality.label}", color = TextPrimary, fontSize = 13.sp) }
-                    TvButton(onClick = { settingsMenuOpen = !settingsMenuOpen }) {
+                    TvButton(onClick = { settingsMenuOpen = !settingsMenuOpen }, modifier = keepControlsVisible()) {
                         Text("⚙", color = TextPrimary, fontSize = 14.sp)
                     }
                 }
@@ -2154,9 +2175,15 @@ internal fun PlayerScreen(
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 330.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("EPISODES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        episodeList.take(8).forEach { item ->
-                            TvButton(onClick = { onSelectEpisode(item); episodeMenuOpen = false }, selected = item.number == episode, modifier = Modifier.fillMaxWidth()) {
-                                Text("${item.number}. ${item.name}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                            items(episodeList) { item ->
+                                TvButton(
+                                    onClick = { onSelectEpisode(item); episodeMenuOpen = false },
+                                    selected = item.number == episode,
+                                    modifier = keepControlsVisible(Modifier.then(if (item.number == episodeList.firstOrNull()?.number) Modifier.focusRequester(episodeFocus) else Modifier)).fillMaxWidth(),
+                                ) {
+                                    Text("${item.number}. ${item.name}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
                             }
                         }
                     }
