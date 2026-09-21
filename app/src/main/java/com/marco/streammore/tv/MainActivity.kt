@@ -161,6 +161,7 @@ internal sealed interface TvScreen {
     data object NewHot : TvScreen
     data object MyList : TvScreen
     data object Activity : TvScreen
+    data object AdminWatching : TvScreen
     data object Live : TvScreen
     data class Detail(val mediaType: String, val tmdbId: Int) : TvScreen
     data class Player(
@@ -191,6 +192,8 @@ internal fun StreammoreTvApp() {
     var screen by remember { mutableStateOf<TvScreen>(TvScreen.Login) }
     var profiles by remember { mutableStateOf<List<Profile>>(emptyList()) }
     var profileId by remember { mutableStateOf<String?>(null) }
+    var isAdmin by remember { mutableStateOf(false) }
+    var watching by remember { mutableStateOf<List<WatchingEntry>>(emptyList()) }
     var rows by remember { mutableStateOf<List<HomeRow>>(emptyList()) }
     var billboard by remember { mutableStateOf<Billboard?>(null) }
     var autoplayPreviews by remember { mutableStateOf(true) }
@@ -319,6 +322,7 @@ internal fun StreammoreTvApp() {
             val source = api.streams(mediaType, tmdbId, id, season, episode).firstOrNull()
                 ?: error("No playable sources were found")
             val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
+            runCatching { api.watching(id, mediaType, tmdbId, title, season, episode) }
             TvScreen.Player(
                 source.url,
                 title,
@@ -358,6 +362,14 @@ internal fun StreammoreTvApp() {
     fun loadActivity() = scope.launch {
         profileId?.let { id -> loading = true; runCatching { api.activity(id) }.onSuccess { activity = it; screen = TvScreen.Activity }.onFailure { error = it.message }; loading = false }
     }
+    fun loadWatching() = scope.launch {
+        if (!isAdmin) return@launch
+        loading = true
+        runCatching { api.adminWatching() }
+            .onSuccess { watching = it; screen = TvScreen.AdminWatching }
+            .onFailure { error = it.message ?: "Could not load current viewers" }
+        loading = false
+    }
     fun navigate(target: TvScreen) {
         when (target) {
             TvScreen.Home -> profileId?.let { loadHome(it) }
@@ -365,6 +377,7 @@ internal fun StreammoreTvApp() {
             TvScreen.MyList -> loadMyList()
             TvScreen.NewHot -> loadNewHot()
             TvScreen.Activity -> loadActivity()
+            TvScreen.AdminWatching -> loadWatching()
             TvScreen.Live -> loadLive()
             TvScreen.Search, TvScreen.Profiles -> screen = target
             else -> screen = target
@@ -372,7 +385,10 @@ internal fun StreammoreTvApp() {
     }
 
     LaunchedEffect(Unit) {
-        runCatching { api.me() }.onSuccess { loadProfiles() }
+        runCatching { api.me() }.onSuccess { auth ->
+            isAdmin = auth.optJSONObject("user")?.optBoolean("isAdmin", false) ?: false
+            loadProfiles()
+        }
         runCatching { checkForAppUpdate() }
             .onSuccess { availableUpdate = it }
     }
@@ -381,9 +397,9 @@ internal fun StreammoreTvApp() {
         Surface(Modifier.fillMaxSize(), color = Bg) {
             Box(Modifier.fillMaxSize()) {
                 when (val current = screen) {
-                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
+                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { loading = true; runCatching { api.login(email, password) }.onSuccess { runCatching { api.me() }.onSuccess { auth -> isAdmin = auth.optJSONObject("user")?.optBoolean("isAdmin", false) ?: false }; loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
                     TvScreen.Profiles -> ProfileScreen(profiles, error, ::loadHome)
-                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) {
                         HomeScreen(
                             rows = rows,
                             billboard = billboard,
@@ -400,7 +416,7 @@ internal fun StreammoreTvApp() {
                             },
                         )
                     }
-                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) {
                         BrowseScreen(
                             title = if (current.mediaType == "tv") "TV Shows" else "Movies",
                             cards = cards,
@@ -415,11 +431,14 @@ internal fun StreammoreTvApp() {
                             onCard = ::openDetail,
                         )
                     }
-                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
-                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail) }
-                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail) }
-                    TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
-                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) { SearchScreen(cards, ::openDetail) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
+                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) { NewHotScreen(rows, ::openDetail) }
+                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) { GridScreen("My List", cards, ::openDetail) }
+                    TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) { ActivityScreen(activity) }
+                    TvScreen.AdminWatching -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) {
+                        AdminWatchingScreen(watching, error, onRefresh = ::loadWatching)
+                    }
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, isAdmin = isAdmin) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
                     is TvScreen.Detail -> {
                         val active = detail
                         if (active == null) LoadingScreen(error) else DetailScreen(
@@ -486,6 +505,11 @@ internal fun StreammoreTvApp() {
                                 }
                             }
                         },
+                        {
+                            profileId?.let { id ->
+                                scope.launch { runCatching { api.stopWatching(id) } }
+                            }
+                        },
                         { next ->
                             play(
                                 "tv",
@@ -533,7 +557,13 @@ internal fun StreammoreTvApp() {
 // ── Shell ────────────────────────────────────────────────────────────────────
 
 @Composable
-internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: Profile?, content: @Composable () -> Unit) {
+internal fun AppShell(
+    screen: TvScreen,
+    navigate: (TvScreen) -> Unit,
+    profile: Profile?,
+    isAdmin: Boolean = false,
+    content: @Composable () -> Unit,
+) {
     // Back from any section returns Home; only Back from Home leaves the app.
     BackHandler(enabled = screen !is TvScreen.Home) { navigate(TvScreen.Home) }
     Column(Modifier.fillMaxSize()) {
@@ -559,6 +589,7 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
             TopButton("New & Hot", screen is TvScreen.NewHot) { navigate(TvScreen.NewHot) }
             TopButton("Live TV", screen is TvScreen.Live) { navigate(TvScreen.Live) }
             TopButton("My List", screen is TvScreen.MyList) { navigate(TvScreen.MyList) }
+            if (isAdmin) TopButton("Admin", screen is TvScreen.AdminWatching) { navigate(TvScreen.AdminWatching) }
             Spacer(Modifier.weight(1f))
             Text(profile?.name ?: "Profile", color = Muted, fontSize = 14.sp)
             Spacer(Modifier.width(8.dp))
@@ -1335,6 +1366,68 @@ internal fun ActivityScreen(items: List<ActivityEntry>) {
 }
 
 @Composable
+internal fun AdminWatchingScreen(items: List<WatchingEntry>, error: String?, onRefresh: () -> Unit) {
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(10_000)
+            onRefresh()
+        }
+    }
+    LazyColumn(
+        contentPadding = PaddingValues(horizontal = Gutter, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Who is watching", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(18.dp))
+                TvButton(onRefresh) { Text("Refresh", color = TextPrimary) }
+            }
+        }
+        item {
+            Text(
+                "Live playback from the last 30 seconds",
+                color = Muted,
+                fontSize = 13.sp,
+            )
+        }
+        if (items.isEmpty()) {
+            item { Text("No one is currently watching.", color = Muted, modifier = Modifier.padding(top = 12.dp)) }
+        }
+        items(items) { entry ->
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Panel).padding(16.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(entry.profileName, color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.width(10.dp))
+                    Text("(${entry.accountName})", color = Muted, fontSize = 13.sp)
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    buildString {
+                        append(entry.title)
+                        if (entry.mediaType == "tv" && entry.season != null && entry.episode != null) {
+                            append(" · S${entry.season} E${entry.episode}")
+                        }
+                    },
+                    color = Purple,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(
+                    listOfNotNull(entry.client, entry.ip?.takeIf { it.isNotBlank() }).joinToString(" · "),
+                    color = Muted,
+                    fontSize = 12.sp,
+                )
+            }
+        }
+        error?.let { message -> item { Text(message, color = ErrorText, fontSize = 14.sp) } }
+    }
+}
+
+@Composable
 internal fun LiveScreen(channels: List<LiveChannel>, error: String?, onPlay: (LiveChannel) -> Unit, onRefresh: () -> Unit) {
     val firstChannel = remember { FocusRequester() }
     FocusFirstWhenReady(channels.isNotEmpty(), firstChannel)
@@ -1653,6 +1746,7 @@ internal fun PlayerScreen(
     nextEpisode: NextEpisodeInfo? = null,
     initialPositionMs: Long? = null,
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
+    onStopWatching: () -> Unit = {},
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -1791,6 +1885,7 @@ internal fun PlayerScreen(
             if (duration > 0L && player.currentPosition >= 0L) {
                 onProgress(player.currentPosition, duration)
             }
+            onStopWatching()
             player.removeListener(listener)
             player.release()
         }

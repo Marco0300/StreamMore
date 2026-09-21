@@ -164,6 +164,42 @@ class StreammoreApi(
         })
     }
 
+    suspend fun watching(profileId: String, mediaType: String, tmdbId: Int, title: String, season: Int? = null, episode: Int? = null) =
+        withContext(Dispatchers.IO) {
+            post("/api/watching", JSONObject().apply {
+                put("profileId", profileId)
+                put("mediaType", mediaType)
+                put("tmdbId", tmdbId)
+                put("title", title)
+                put("client", "Streammore-TV")
+                season?.let { put("season", it) }
+                episode?.let { put("episode", it) }
+            })
+        }
+
+    suspend fun stopWatching(profileId: String) = withContext(Dispatchers.IO) {
+        request("DELETE", "/api/watching?profileId=${enc(profileId)}", null)
+    }
+
+    suspend fun adminWatching(): List<WatchingEntry> = withContext(Dispatchers.IO) {
+        val values = get("/api/admin/watching").optJSONArray("watching") ?: JSONArray()
+        List(values.length()) { index ->
+            val item = values.getJSONObject(index)
+            WatchingEntry(
+                profileName = item.optString("profileName", "Unknown profile"),
+                accountName = item.optString("accountName", "Unknown account"),
+                email = item.optString("email", null),
+                title = item.optString("title", "Unknown title"),
+                mediaType = item.optString("mediaType", "movie"),
+                season = item.intOrNull("season"),
+                episode = item.intOrNull("episode"),
+                ip = item.optString("ip", null),
+                client = item.optString("client", null),
+                lastSeen = item.optLong("lastSeen", 0L),
+            )
+        }
+    }
+
     suspend fun browse(mediaType: String, profileId: String, page: Int = 1): BrowsePage =
         withContext(Dispatchers.IO) {
             val body = get("/api/browse/$mediaType?profileId=${enc(profileId)}&page=$page")
