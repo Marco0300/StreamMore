@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.view.TextureView
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
@@ -16,6 +17,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -1770,6 +1772,7 @@ internal fun PlayerScreen(
     var skipTargetMs by remember(source) { mutableStateOf<Long?>(null) }
     val qualityFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
+    val playerFocus = remember(source) { FocusRequester() }
     val trackSelector = remember(source) { DefaultTrackSelector(context) }
     val player = remember(source, trackSelector) {
         // Subtitle files come from the authenticated /api/subtitles/file route, so
@@ -1803,6 +1806,12 @@ internal fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+    }
+
+    LaunchedEffect(source) {
+        withFrameNanos { }
+        delay(150)
+        runCatching { playerFocus.requestFocus() }
     }
 
     fun applyQuality(quality: VideoQuality) {
@@ -1937,6 +1946,8 @@ internal fun PlayerScreen(
     Box(
         Modifier
             .fillMaxSize()
+            .focusRequester(playerFocus)
+            .focusable()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
@@ -1966,6 +1977,9 @@ internal fun PlayerScreen(
         AndroidView(
             { PlayerView(it).apply {
                 this.player = player
+                isFocusable = false
+                isFocusableInTouchMode = false
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             } },
