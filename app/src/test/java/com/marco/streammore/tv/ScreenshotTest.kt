@@ -219,17 +219,6 @@ class ScreenshotTest {
     }
 
     @Test
-    fun adminWatching() = shot("26-admin-watching") {
-        AdminWatchingScreen(
-            listOf(
-                WatchingEntry("Marco", "Marco", title = "The Bear", mediaType = "tv", season = 2, episode = 4, client = "Streammore-TV", ip = "192.168.3.9"),
-                WatchingEntry("Kids", "Marco", title = "Moana", mediaType = "movie", client = "Browser", ip = "192.168.3.25"),
-            ),
-            null,
-        ) { }
-    }
-
-    @Test
     fun newHot() = shot("12-newhot") {
         AppShell(TvScreen.NewHot, { }, Fake.profiles[0]) {
             NewHotScreen(Fake.rows) { }

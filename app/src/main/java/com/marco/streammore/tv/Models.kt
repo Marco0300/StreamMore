@@ -104,19 +104,6 @@ data class Person(
     val profile: String? = null,
 )
 
-data class WatchingEntry(
-    val profileName: String,
-    val accountName: String,
-    val email: String? = null,
-    val title: String,
-    val mediaType: String,
-    val season: Int? = null,
-    val episode: Int? = null,
-    val ip: String? = null,
-    val client: String? = null,
-    val lastSeen: Long = 0L,
-)
-
 data class GenreOption(val id: Int, val name: String)
 
 data class BrowsePage(
