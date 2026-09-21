@@ -162,12 +162,18 @@ class StreammoreApi(
         season: Int? = null,
         episode: Int? = null,
         upNext: NextEpisodeInfo? = null,
+        poster: String? = null,
+        backdrop: String? = null,
+        year: String? = null,
     ) = withContext(Dispatchers.IO) {
         post("/api/progress", JSONObject().apply {
             put("profileId", profileId)
             put("mediaType", mediaType)
             put("tmdbId", tmdbId)
             put("title", title)
+            poster?.let { put("poster", it) }
+            backdrop?.let { put("backdrop", it) }
+            year?.let { put("year", it) }
             put("position", position / 1000.0)
             put("duration", duration / 1000.0)
             season?.let { put("season", it) }

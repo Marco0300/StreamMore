@@ -227,6 +227,9 @@ internal sealed interface TvScreen {
         val sources: List<StreamSource> = emptyList(),
         val introEndSeconds: Long? = null,
         val recapEndSeconds: Long? = null,
+        val poster: String? = null,
+        val backdrop: String? = null,
+        val year: String? = null,
     ) : TvScreen
 }
 
@@ -287,6 +290,23 @@ internal fun StreammoreTvApp() {
                 autoplayPreviews = data.autoplayPreviews
                 runCatching { api.myList(id) }.onSuccess { list ->
                     myListKeys = list.map { "${it.mediaType}:${it.tmdbId}" }.toSet()
+                }
+                val missingContinue = data.rows.firstOrNull { it.id == "continue" }?.items.orEmpty()
+                    .filter { it.poster.isNullOrBlank() || it.year.isNullOrBlank() }
+                if (missingContinue.isNotEmpty()) {
+                    val hydrated = missingContinue.associateWith { card ->
+                        runCatching { api.detail(card.mediaType, card.tmdbId, id) }.getOrNull()
+                    }
+                    rows = data.rows.map { row ->
+                        if (row.id != "continue") row else row.copy(items = row.items.map { card ->
+                            val detailCard = hydrated[card]
+                            if (detailCard == null) card else card.copy(
+                                poster = card.poster ?: detailCard.poster,
+                                backdrop = card.backdrop ?: detailCard.backdrop,
+                                year = card.year ?: detailCard.year,
+                            )
+                        })
+                    }
                 }
                 Log.d(
                     "StreammoreHero",
@@ -373,6 +393,9 @@ internal fun StreammoreTvApp() {
         initialPositionMs: Long? = null,
         introEndSeconds: Long? = null,
         recapEndSeconds: Long? = null,
+        poster: String? = null,
+        backdrop: String? = null,
+        year: String? = null,
     ) = scope.launch {
         val id = profileId ?: return@launch
         playerReturn = if (screen is TvScreen.Player) playerReturn else screen
@@ -395,6 +418,9 @@ internal fun StreammoreTvApp() {
                 sources,
                 introEndSeconds,
                 recapEndSeconds,
+                poster,
+                backdrop,
+                year,
             )
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
@@ -563,6 +589,9 @@ internal fun StreammoreTvApp() {
                                                 targetEpisode?.positionMs,
                                                 active.introEndSeconds,
                                                 active.recapEndSeconds,
+                                                poster = active.poster,
+                                                backdrop = active.backdrop,
+                                                year = active.year,
                                             )
                                         }
                                     } else {
@@ -576,10 +605,13 @@ internal fun StreammoreTvApp() {
                                             active.resumePositionMs,
                                             active.introEndSeconds,
                                             active.recapEndSeconds,
+                                            poster = active.poster,
+                                            backdrop = active.backdrop,
+                                            year = active.year,
                                         )
                                     }
                                 } else {
-                                    play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs, introEndSeconds = active.introEndSeconds, recapEndSeconds = active.recapEndSeconds)
+                                    play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs, introEndSeconds = active.introEndSeconds, recapEndSeconds = active.recapEndSeconds, poster = active.poster, backdrop = active.backdrop, year = active.year)
                                 }
                             },
                             { season -> profileId?.let { id -> scope.launch { runCatching { api.season(active.tmdbId, season, id) }.onSuccess { episodes = it }.onFailure { error = it.message ?: "Could not load episodes" } } } },
@@ -594,6 +626,9 @@ internal fun StreammoreTvApp() {
                                     episodes.firstOrNull { it.number == episode }?.positionMs,
                                     active.introEndSeconds,
                                     active.recapEndSeconds,
+                                    poster = active.poster,
+                                    backdrop = active.backdrop,
+                                    year = active.year,
                                 )
                             },
                             { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
@@ -615,7 +650,7 @@ internal fun StreammoreTvApp() {
                         },
                         { selectedEpisode ->
                             if (current.season != null) {
-                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number, detail?.seasons.orEmpty()), selectedEpisode.positionMs)
+                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number, detail?.seasons.orEmpty()), selectedEpisode.positionMs, poster = current.poster, backdrop = current.backdrop, year = current.year)
                             }
                         },
                         current.initialPositionMs,
@@ -638,6 +673,9 @@ internal fun StreammoreTvApp() {
                                             season = current.season,
                                             episode = current.episode,
                                             upNext = current.nextEpisode,
+                                            poster = current.poster,
+                                            backdrop = current.backdrop,
+                                            year = current.year,
                                         )
                                     }
                                 }
@@ -663,6 +701,9 @@ internal fun StreammoreTvApp() {
                                     next.episode,
                                     nextEpisodeAfter(activeEpisodes, next.season, next.episode, detail?.seasons.orEmpty()),
                                     nextEpisode?.positionMs,
+                                    poster = current.poster,
+                                    backdrop = current.backdrop,
+                                    year = current.year,
                                 )
                             }
                         },
