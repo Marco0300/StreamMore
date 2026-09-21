@@ -1946,6 +1946,7 @@ internal fun PlayerScreen(
     val qualityFocus = remember(source) { FocusRequester() }
     val qualityOptionFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
+    val nextCloseFocus = remember(source, nextEpisode) { FocusRequester() }
     val playerFocus = remember(source) { FocusRequester() }
     val playFocus = remember(source) { FocusRequester() }
     val seekFocus = remember(source) { FocusRequester() }
@@ -2118,10 +2119,14 @@ internal fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(nextPromptVisible) {
-        if (nextPromptVisible && !nextPromptDismissed) {
-            delay(80)
-            nextFocus.requestFocus()
+    LaunchedEffect(nextPromptVisible, nextEpisode) {
+        if (nextPromptVisible && nextEpisode != null && !nextPromptDismissed) {
+            repeat(4) {
+                withFrameNanos { }
+                delay(80)
+                val focused = runCatching { nextFocus.requestFocus(); true }.getOrDefault(false)
+                if (focused) return@LaunchedEffect
+            }
         }
     }
 
@@ -2146,6 +2151,10 @@ internal fun PlayerScreen(
     }
     BackHandler {
         when {
+            nextPromptVisible && !nextPromptDismissed -> {
+                nextPromptDismissed = true
+                nextPromptVisible = false
+            }
             qualityMenuOpen -> qualityMenuOpen = false
             subtitleMenuOpen -> subtitleMenuOpen = false
             sourceMenuOpen -> sourceMenuOpen = false
@@ -2447,14 +2456,21 @@ internal fun PlayerScreen(
                                 }
                             },
                             primary = true,
-                            modifier = Modifier.focusRequester(nextFocus),
+                            modifier = Modifier
+                                .focusRequester(nextFocus)
+                                .focusProperties { right = nextCloseFocus },
                         ) {
                             Text("▶ Play next", fontSize = 14.sp)
                         }
-                        TvButton(onClick = {
-                            nextPromptDismissed = true
-                            nextPromptVisible = false
-                        }) {
+                        TvButton(
+                            onClick = {
+                                nextPromptDismissed = true
+                                nextPromptVisible = false
+                            },
+                            modifier = Modifier
+                                .focusRequester(nextCloseFocus)
+                                .focusProperties { left = nextFocus },
+                        ) {
                             Text("Close", color = TextPrimary, fontSize = 14.sp)
                         }
                     }
