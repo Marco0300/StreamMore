@@ -1814,6 +1814,7 @@ internal fun PlayerScreen(
     var skipLabel by remember(source) { mutableStateOf<String?>(null) }
     var skipTargetMs by remember(source) { mutableStateOf<Long?>(null) }
     val qualityFocus = remember(source) { FocusRequester() }
+    val qualityOptionFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val playerFocus = remember(source) { FocusRequester() }
     val playFocus = remember(source) { FocusRequester() }
@@ -1927,6 +1928,13 @@ internal fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(qualityMenuOpen) {
+        delay(80)
+        runCatching {
+            if (qualityMenuOpen) qualityOptionFocus.requestFocus() else qualityFocus.requestFocus()
+        }
+    }
+
     LaunchedEffect(player, chromeVisible) {
         while (chromeVisible) {
             playbackPosition = player.currentPosition.coerceAtLeast(0L)
@@ -1992,7 +2000,16 @@ internal fun PlayerScreen(
             player.release()
         }
     }
-    BackHandler(onBack = onBack)
+    BackHandler {
+        when {
+            qualityMenuOpen -> qualityMenuOpen = false
+            subtitleMenuOpen -> subtitleMenuOpen = false
+            sourceMenuOpen -> sourceMenuOpen = false
+            episodeMenuOpen -> episodeMenuOpen = false
+            settingsMenuOpen -> settingsMenuOpen = false
+            else -> onBack()
+        }
+    }
 
     fun keepControlsVisible(modifier: Modifier = Modifier): Modifier = modifier.onFocusChanged {
         if (it.isFocused) {
@@ -2176,17 +2193,26 @@ internal fun PlayerScreen(
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("VIDEO QUALITY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        TvButton(onClick = { applyQuality(null) }, selected = selectedQualityLabel == "Auto", modifier = Modifier.fillMaxWidth()) {
+                        TvButton(
+                            onClick = { applyQuality(null) },
+                            selected = selectedQualityLabel == "Auto",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(qualityOptionFocus)
+                                .focusProperties { up = qualityFocus },
+                        ) {
                             Text("Auto", color = TextPrimary, fontSize = 14.sp)
                         }
                         if (availableQualities.isEmpty()) {
                             Text("Waiting for stream renditions…", color = Muted, fontSize = 12.sp)
                         } else {
-                            availableQualities.forEach { quality ->
+                            availableQualities.forEachIndexed { index, quality ->
                                 TvButton(
                                     onClick = { applyQuality(quality) },
                                     selected = quality.label == selectedQualityLabel,
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .focusProperties { if (index == availableQualities.lastIndex) down = qualityFocus },
                                 ) {
                                     Text(quality.label, color = TextPrimary, fontSize = 14.sp)
                                 }
