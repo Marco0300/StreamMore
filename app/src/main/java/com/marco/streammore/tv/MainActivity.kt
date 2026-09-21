@@ -1890,6 +1890,20 @@ internal fun PlayerScreen(
         subtitleMenuOpen = false
     }
 
+    fun seekToPosition(positionMs: Long) {
+        val duration = player.duration.takeIf { it > 0L } ?: playbackDuration
+        if (duration <= 0L) return
+        val target = positionMs.coerceIn(0L, duration)
+        player.seekTo(target)
+        playbackPosition = target
+        chromeVisible = true
+        interactionTick++
+    }
+
+    fun seekBy(deltaMs: Long) {
+        seekToPosition(player.currentPosition + deltaMs)
+    }
+
     LaunchedEffect(player, nextEpisode, nextPromptDismissed) {
         if (nextEpisode == null || nextPromptDismissed) return@LaunchedEffect
         while (true) {
@@ -2110,8 +2124,7 @@ internal fun PlayerScreen(
                     Slider(
                         value = (playbackPosition.toFloat() / playbackDuration.toFloat()).coerceIn(0f, 1f),
                         onValueChange = { fraction ->
-                            playbackPosition = (fraction * playbackDuration).toLong()
-                            player.seekTo(playbackPosition)
+                            seekToPosition((fraction * playbackDuration).toLong())
                         },
                         colors = SliderDefaults.colors(
                             thumbColor = Purple,
@@ -2122,6 +2135,15 @@ internal fun PlayerScreen(
                             .fillMaxWidth()
                             .height(24.dp)
                             .focusRequester(seekFocus)
+                            .focusable()
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionLeft -> { seekBy(-10_000L); true }
+                                    Key.DirectionRight -> { seekBy(10_000L); true }
+                                    else -> false
+                                }
+                            }
                             .focusProperties { down = playFocus }
                             .onFocusChanged { if (it.isFocused) { chromeVisible = true; interactionTick++ } },
                     )
