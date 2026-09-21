@@ -167,7 +167,7 @@ class ScreenshotTest {
     @Test
     fun shellAndGrid() = shot("05-shell-grid") {
         AppShell(TvScreen.Browse("movie"), { }, Fake.profiles[0]) {
-            GridScreen("Movies", Fake.cards(18)) { }
+            GridScreen("Movies", Fake.cards(18), onCard = { })
         }
     }
 
@@ -221,14 +221,14 @@ class ScreenshotTest {
     @Test
     fun newHot() = shot("12-newhot") {
         AppShell(TvScreen.NewHot, { }, Fake.profiles[0]) {
-            NewHotScreen(Fake.rows) { }
+            NewHotScreen(Fake.rows, onCard = { })
         }
     }
 
     @Test
     fun myList() = shot("13-mylist") {
         AppShell(TvScreen.MyList, { }, Fake.profiles[0]) {
-            GridScreen("My List", Fake.cards(4)) { }
+            GridScreen("My List", Fake.cards(4), onCard = { })
         }
     }
 

@@ -180,6 +180,10 @@ class StreammoreApi(
         })
     }
 
+    suspend fun removeProgress(profileId: String, mediaType: String, tmdbId: Int): Boolean = withContext(Dispatchers.IO) {
+        val params = "profileId=${enc(profileId)}&mediaType=${enc(mediaType)}&tmdbId=$tmdbId"
+        delete("/api/progress?$params").optBoolean("ok", false)
+    }
     suspend fun browse(mediaType: String, profileId: String, page: Int = 1): BrowsePage =
         withContext(Dispatchers.IO) {
             val body = get("/api/browse/$mediaType?profileId=${enc(profileId)}&page=$page")
@@ -349,6 +353,8 @@ class StreammoreApi(
     private suspend fun get(path: String): JSONObject = request("GET", path, null)
 
     private suspend fun post(path: String, body: JSONObject): JSONObject = request("POST", path, body)
+
+    private suspend fun delete(path: String): JSONObject = request("DELETE", path, null)
 
     private suspend fun request(method: String, path: String, body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
         val endpoint = baseUrl.trimEnd('/') + path

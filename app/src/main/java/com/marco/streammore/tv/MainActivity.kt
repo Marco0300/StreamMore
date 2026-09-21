@@ -17,6 +17,8 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -248,6 +250,8 @@ internal fun StreammoreTvApp() {
     var billboard by remember { mutableStateOf<Billboard?>(null) }
     var autoplayPreviews by remember { mutableStateOf(true) }
     var cards by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
+    var myListKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var contextCard by remember { mutableStateOf<MediaCard?>(null) }
     var browsePage by remember { mutableStateOf(1) }
     var browseTotalPages by remember { mutableStateOf(1) }
     var browseTotalResults by remember { mutableStateOf(0) }
@@ -281,6 +285,9 @@ internal fun StreammoreTvApp() {
                 rows = data.rows
                 billboard = data.billboard
                 autoplayPreviews = data.autoplayPreviews
+                runCatching { api.myList(id) }.onSuccess { list ->
+                    myListKeys = list.map { "${it.mediaType}:${it.tmdbId}" }.toSet()
+                }
                 Log.d(
                     "StreammoreHero",
                     "billboard=${data.billboard?.title} type=${data.billboard?.mediaType} " +
@@ -409,7 +416,7 @@ internal fun StreammoreTvApp() {
         loading = false
     }
     fun loadMyList() = scope.launch {
-        profileId?.let { id -> loading = true; runCatching { api.myList(id) }.onSuccess { cards = it; screen = TvScreen.MyList }.onFailure { error = it.message }; loading = false }
+        profileId?.let { id -> loading = true; runCatching { api.myList(id) }.onSuccess { cards = it; myListKeys = it.map { card -> "${card.mediaType}:${card.tmdbId}" }.toSet(); screen = TvScreen.MyList }.onFailure { error = it.message }; loading = false }
     }
     fun loadNewHot() = scope.launch {
         profileId?.let { id -> loading = true; runCatching { api.newHot(id) }.onSuccess { rows = it; screen = TvScreen.NewHot }.onFailure { error = it.message }; loading = false }
@@ -417,6 +424,30 @@ internal fun StreammoreTvApp() {
     fun loadActivity() = scope.launch {
         profileId?.let { id -> loading = true; runCatching { api.activity(id) }.onSuccess { activity = it; screen = TvScreen.Activity }.onFailure { error = it.message }; loading = false }
     }
+    fun cardKey(card: MediaCard): String = "${card.mediaType}:${card.tmdbId}"
+    fun toggleCardList(card: MediaCard) = scope.launch {
+        val id = profileId ?: return@launch
+        runCatching { api.toggleList(id, card) }
+            .onSuccess { added ->
+                val key = cardKey(card)
+                myListKeys = if (added) myListKeys + key else myListKeys - key
+                if (!added && screen is TvScreen.MyList) cards = cards.filterNot { cardKey(it) == key }
+                contextCard = null
+            }
+            .onFailure { error = it.message ?: "Could not update My List" }
+    }
+    fun removeCardProgress(card: MediaCard) = scope.launch {
+        val id = profileId ?: return@launch
+        runCatching { api.removeProgress(id, card.mediaType, card.tmdbId) }
+            .onSuccess {
+                rows = rows.map { row ->
+                    if (row.id == "continue") row.copy(items = row.items.filterNot { cardKey(it) == cardKey(card) }) else row
+                }.filter { it.items.isNotEmpty() }
+                contextCard = null
+            }
+            .onFailure { error = it.message ?: "Could not remove viewing progress" }
+    }
+
     fun navigate(target: TvScreen) {
         when (target) {
             TvScreen.Home -> profileId?.let { loadHome(it) }
@@ -466,6 +497,7 @@ internal fun StreammoreTvApp() {
                             billboard = billboard,
                             autoplayPreviews = autoplayPreviews,
                             onCard = ::openDetail,
+                            onLongCard = { contextCard = it },
                             onPlayBillboard = { hero ->
                                 // Movies play straight away; a series needs an episode
                                 // choice, so it opens its detail page (as the browser does).
@@ -490,11 +522,12 @@ internal fun StreammoreTvApp() {
                             onGenre = { loadBrowseGenre(current.mediaType, it) },
                             onLoadMore = { loadMoreBrowse(current.mediaType) },
                             onCard = ::openDetail,
+                            onLongCard = { contextCard = it },
                         )
                     }
-                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
-                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail) }
-                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail) }
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail, { contextCard = it }) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
+                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
+                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
                     TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
                     TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
                     is TvScreen.Detail -> {
@@ -662,6 +695,19 @@ internal fun StreammoreTvApp() {
                         },
                     )
                 }
+                if (contextCard != null && (availableUpdate == null || updateDismissed)) {
+                    val selected = contextCard!!
+                    CardActionMenu(
+                        card = selected,
+                        inMyList = myListKeys.contains("${selected.mediaType}:${selected.tmdbId}"),
+                        canRemoveProgress = selected.percent > 0.0 || selected.season != null || selected.episode != null,
+                        modifier = Modifier.align(Alignment.Center),
+                        onDismiss = { contextCard = null },
+                        onToggleList = { toggleCardList(selected) },
+                        onRemoveProgress = { removeCardProgress(selected) },
+                    )
+                }
+
             }
         }
     }
@@ -733,12 +779,14 @@ internal fun TvCard(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
     verticalArrangement: Arrangement.Vertical = Arrangement.Center,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
     TvCardSurface(
         focused = focused,
         onClick = onClick,
+        onLongClick = onLongClick,
         modifier = modifier.onFocusChanged { focused = it.isFocused || it.hasFocus },
         shape = shape,
         contentPadding = contentPadding,
@@ -753,6 +801,7 @@ internal fun TvCard(
  * [focused] flag rather than of live focus ownership, so it can be rendered and
  * inspected in isolation.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TvCardSurface(
     focused: Boolean,
@@ -762,6 +811,7 @@ internal fun TvCardSurface(
     contentPadding: PaddingValues = PaddingValues(0.dp),
     horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
     verticalArrangement: Arrangement.Vertical = Arrangement.Center,
+    onLongClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
@@ -770,7 +820,13 @@ internal fun TvCardSurface(
     Card(
         modifier = modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clickable(onClick = onClick),
+            .then(
+                if (onLongClick != null) {
+                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+                } else {
+                    Modifier.clickable(onClick = onClick)
+                },
+            ),
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = if (focused) PanelFocused else Panel),
         border = BorderStroke(if (focused) 2.dp else 1.dp, border),
@@ -807,9 +863,18 @@ private fun WatchProgress(percent: Double) {
 
 /** Poster tile: artwork inside the focus ring, caption underneath it. */
 @Composable
-internal fun MediaCardView(card: MediaCard, onClick: (MediaCard) -> Unit, modifier: Modifier = Modifier) {
+internal fun MediaCardView(
+    card: MediaCard,
+    onClick: (MediaCard) -> Unit,
+    modifier: Modifier = Modifier,
+    onLongPress: (MediaCard) -> Unit = {},
+) {
     Column(Modifier.width(PosterWidth)) {
-        TvCard({ onClick(card) }, modifier.fillMaxWidth()) {
+        TvCard(
+            onClick = { onClick(card) },
+            onLongClick = { onLongPress(card) },
+            modifier = modifier.fillMaxWidth(),
+        ) {
             Box {
                 AsyncImage(
                     model = card.poster ?: card.backdrop,
@@ -1254,6 +1319,7 @@ internal fun HomeScreen(
     billboard: Billboard? = null,
     autoplayPreviews: Boolean = true,
     onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
     onPlayBillboard: (Billboard) -> Unit = {},
     loadTrailer: suspend (Billboard) -> String? = { null },
 ) {
@@ -1299,6 +1365,7 @@ internal fun HomeScreen(
                 title = row.title,
                 items = row.items,
                 onCard = onCard,
+                onLongCard = onLongCard,
                 firstCardRequester = if (index == 0) heroPlayFocus else null,
             )
         }
@@ -1311,6 +1378,7 @@ internal fun RowSection(
     title: String,
     items: List<MediaCard>,
     onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
     firstCardRequester: FocusRequester? = null,
 ) {
     Column(Modifier.padding(horizontal = Gutter)) {
@@ -1332,7 +1400,7 @@ internal fun RowSection(
                 } else {
                     Modifier
                 }
-                MediaCardView(item, onCard, modifier)
+                MediaCardView(item, onCard, modifier, onLongCard)
             }
         }
     }
@@ -1351,6 +1419,7 @@ internal fun BrowseScreen(
     onGenre: (GenreOption?) -> Unit,
     onLoadMore: () -> Unit,
     onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
     LaunchedEffect(gridState, cards.size, page, totalPages, selectedGenreId) {
@@ -1395,7 +1464,7 @@ internal fun BrowseScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(cards) { card -> MediaCardView(card, onCard) }
+            items(cards) { card -> MediaCardView(card, onCard, Modifier, onLongCard) }
             if (loadingMore) {
                 item { CircularProgressIndicator(color = Purple, modifier = Modifier.padding(24.dp)) }
             }
@@ -1404,7 +1473,12 @@ internal fun BrowseScreen(
 }
 
 @Composable
-internal fun GridScreen(title: String, cards: List<MediaCard>, onCard: (MediaCard) -> Unit) {
+internal fun GridScreen(
+    title: String,
+    cards: List<MediaCard>,
+    onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
+) {
     val firstCard = remember { FocusRequester() }
     FocusFirstWhenReady(cards.isNotEmpty(), firstCard)
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
@@ -1419,14 +1493,19 @@ internal fun GridScreen(title: String, cards: List<MediaCard>, onCard: (MediaCar
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             itemsIndexed(cards) { index, card ->
-                MediaCardView(card, onCard, if (index == 0) Modifier.focusRequester(firstCard) else Modifier)
+                MediaCardView(card, onCard, if (index == 0) Modifier.focusRequester(firstCard) else Modifier, onLongCard)
             }
         }
     }
 }
 
 @Composable
-internal fun SearchScreen(cards: List<MediaCard>, onCard: (MediaCard) -> Unit, onSearch: (String) -> Unit) {
+internal fun SearchScreen(
+    cards: List<MediaCard>,
+    onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
+    onSearch: (String) -> Unit,
+) {
     var query by remember { mutableStateOf("") }
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1445,17 +1524,21 @@ internal fun SearchScreen(cards: List<MediaCard>, onCard: (MediaCard) -> Unit, o
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(cards) { MediaCardView(it, onCard) }
+            items(cards) { MediaCardView(it, onCard, Modifier, onLongCard) }
         }
     }
 }
 
 @Composable
-internal fun NewHotScreen(rows: List<HomeRow>, onCard: (MediaCard) -> Unit) {
+internal fun NewHotScreen(
+    rows: List<HomeRow>,
+    onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit = {},
+) {
     val firstCard = remember { FocusRequester() }
     FocusFirstWhenReady(rows.any { it.items.isNotEmpty() }, firstCard)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        rows.forEach { row -> RowSection(row.title, row.items, onCard, null) }
+        rows.forEach { row -> RowSection(row.title, row.items, onCard, onLongCard, null) }
         Spacer(Modifier.height(16.dp))
     }
 }
@@ -1781,6 +1864,51 @@ private fun CastCard(person: Person) {
         Text(person.name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (person.character.isNotBlank()) {
             Text(person.character, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun CardActionMenu(
+    card: MediaCard,
+    inMyList: Boolean,
+    canRemoveProgress: Boolean,
+    modifier: Modifier = Modifier,
+    onDismiss: () -> Unit,
+    onToggleList: () -> Unit,
+    onRemoveProgress: () -> Unit,
+) {
+    val firstFocus = remember(card.mediaType, card.tmdbId) { FocusRequester() }
+    LaunchedEffect(card.mediaType, card.tmdbId) {
+        delay(80)
+        runCatching { firstFocus.requestFocus() }
+    }
+    BackHandler(onBack = onDismiss)
+    Surface(
+        modifier = modifier.widthIn(min = 300.dp, max = 430.dp),
+        color = Panel.copy(alpha = 0.99f),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(2.dp, Purple),
+        shadowElevation = 18.dp,
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(card.title, color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text("Card actions", color = Muted, fontSize = 12.sp)
+            TvButton(
+                onClick = onToggleList,
+                primary = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(firstFocus),
+            ) {
+                Text(if (inMyList) "Remove from My List" else "Add to My List", fontSize = 14.sp)
+            }
+            if (canRemoveProgress) {
+                TvButton(onClick = onRemoveProgress, modifier = Modifier.fillMaxWidth()) {
+                    Text("Remove from Continue Watching", color = TextPrimary, fontSize = 14.sp)
+                }
+            }
+            TvButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Cancel", color = TextPrimary, fontSize = 14.sp)
+            }
         }
     }
 }
