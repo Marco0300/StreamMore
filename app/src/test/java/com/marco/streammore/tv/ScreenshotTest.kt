@@ -201,12 +201,12 @@ class ScreenshotTest {
 
     @Test
     fun detailMovie() = shot("10-detail-movie") {
-        DetailScreen(Fake.movieDetail, emptyList(), null, { }, { }, { }, { _, _ -> }, { }, { })
+        DetailScreen(Fake.movieDetail, emptyList(), null, { }, { }, { }, { _, _ -> }, { }, { }, { })
     }
 
     @Test
     fun detailTv() = shot("11-detail-tv") {
-        DetailScreen(Fake.tvDetail, Fake.episodes, null, { }, { }, { }, { _, _ -> }, { }, { })
+        DetailScreen(Fake.tvDetail, Fake.episodes, null, { }, { }, { }, { _, _ -> }, { }, { }, { })
     }
 
     @Test
@@ -215,7 +215,7 @@ class ScreenshotTest {
             Fake.episodes[0].copy(progress = 0.5, positionMs = 300_000L),
             Fake.episodes[1].copy(progress = 1.0, watched = true, positionMs = 600_000L),
         )
-        DetailScreen(Fake.tvDetail, watchedEpisodes, null, { }, { }, { }, { _, _ -> }, { }, { })
+        DetailScreen(Fake.tvDetail, watchedEpisodes, null, { }, { }, { }, { _, _ -> }, { }, { }, { })
     }
 
     @Test

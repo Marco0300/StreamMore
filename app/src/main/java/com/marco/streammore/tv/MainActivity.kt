@@ -437,6 +437,25 @@ internal fun StreammoreTvApp() {
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
     }
+    fun playTrailer(mediaType: String, tmdbId: Int, title: String) = scope.launch {
+        error = null
+        playerReturn = screen
+        loading = true
+        runCatching {
+            val url = api.trailer(mediaType, tmdbId)
+                ?: error("No trailer is available for this title")
+            TvScreen.Player(
+                source = url,
+                title = "$title — Trailer",
+                mediaType = null,
+                tmdbId = null,
+                sources = listOf(StreamSource("Trailer", "Trailer", url)),
+            )
+        }.onSuccess { screen = it }
+            .onFailure { error = it.message ?: "Could not load trailer" }
+        loading = false
+    }
+
     fun loadLive() = scope.launch {
         val id = profileId ?: return@launch
         error = null
@@ -697,6 +716,7 @@ internal fun StreammoreTvApp() {
                                 )
                             },
                             { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
+                            { playTrailer(active.mediaType, active.tmdbId, active.title) },
                             { value -> profileId?.let { id -> scope.launch { detail = active.copy(myRating = api.rate(id, active.mediaType, active.tmdbId, value)) } } },
                         )
                     }
@@ -1788,6 +1808,7 @@ internal fun DetailScreen(
     onSeason: (Int) -> Unit,
     onEpisode: (Int, Int) -> Unit,
     onList: () -> Unit,
+    onTrailer: () -> Unit,
     onRate: (String?) -> Unit,
 ) {
     var selectedSeason by remember(detail.tmdbId) { mutableStateOf(detail.resumeSeason ?: detail.seasons.firstOrNull()?.number ?: 1) }
@@ -1863,6 +1884,9 @@ internal fun DetailScreen(
                         }
                         TvButton(onList) {
                             Text(if (detail.inMyList) "✓ My List" else "+ My List", color = TextPrimary, fontSize = 15.sp)
+                        }
+                        TvButton(onTrailer) {
+                            Text("▶ Trailer", color = TextPrimary, fontSize = 15.sp)
                         }
                         TvButton({ onRate(if (detail.myRating == "up") null else "up") }) { Text("👍") }
                         TvButton({ onRate(if (detail.myRating == "down") null else "down") }) { Text("👎") }
