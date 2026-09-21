@@ -21,4 +21,10 @@ class PlaybackProgressTest {
     fun missingDurationHasNoProgress() {
         assertEquals(0.0, progressFraction(30.0, 0.0), 0.001)
     }
+
+    @Test
+    fun onlyPartiallyWatchedTitlesHaveAResumePosition() {
+        assertEquals(300_000L, resumablePositionMs(300.0, 600.0, 0.5))
+        assertEquals(null, resumablePositionMs(600.0, 600.0, 1.0))
+    }
 }

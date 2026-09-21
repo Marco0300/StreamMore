@@ -181,6 +181,11 @@ fun JSONObject.doubleOrNull(name: String): Double? =
 internal fun progressFraction(position: Double?, duration: Double?): Double =
     if (position != null && duration != null && duration > 0.0) (position / duration).coerceIn(0.0, 1.0) else 0.0
 
+internal fun resumablePositionMs(position: Double?, duration: Double?, percent: Double?): Long? {
+    val fraction = percent ?: progressFraction(position, duration)
+    return position?.takeIf { fraction > 0.02 && fraction < 0.95 }?.let { (it * 1000.0).toLong() }
+}
+
 internal fun isWatchedProgress(progress: Double): Boolean = progress >= 0.95
 
 data class ResumePoint(val season: Int, val episode: Int)

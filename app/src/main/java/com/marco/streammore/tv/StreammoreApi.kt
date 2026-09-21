@@ -69,7 +69,13 @@ class StreammoreApi(
                 inMyList = body.optBoolean("inMyList", false),
                 myRating = body.optString("myRating", null),
                 progress = progressJson?.optDouble("percent", 0.0) ?: 0.0,
-                resumePositionMs = progressJson?.doubleOrNull("position")?.let { (it * 1000.0).toLong() },
+                resumePositionMs = progressJson?.let { progress ->
+                    resumablePositionMs(
+                        progress.doubleOrNull("position"),
+                        progress.doubleOrNull("duration"),
+                        progress.doubleOrNull("percent"),
+                    )
+                },
                 resumeSeason = resume?.season,
                 resumeEpisode = resume?.episode,
                 genres = body.toGenreNames(),
@@ -96,7 +102,11 @@ class StreammoreApi(
                     still = e.optString("still", null),
                     progress = fraction,
                     watched = isWatchedProgress(fraction),
-                    positionMs = progress?.doubleOrNull("position")?.let { seconds -> (seconds * 1000.0).toLong() } ?: 0L,
+                    positionMs = resumablePositionMs(
+                        progress?.doubleOrNull("position"),
+                        progress?.doubleOrNull("duration"),
+                        fraction,
+                    ) ?: 0L,
                 )
             }
         }
