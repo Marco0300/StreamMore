@@ -79,6 +79,11 @@ class StreammoreApi(
                 },
                 resumeSeason = resume?.season,
                 resumeEpisode = resume?.episode,
+                resumeNext = progressJson?.let { progress ->
+                    val percent = progress.doubleOrNull("percent")
+                        ?: progressFraction(progress.doubleOrNull("position"), progress.doubleOrNull("duration"))
+                    percent >= 0.95 && progress.optJSONObject("upNext")?.toResumePoint() != null
+                } ?: false,
                 introEndSeconds = marker?.doubleOrNull("introEnd")?.toLong(),
                 recapEndSeconds = marker?.doubleOrNull("recapEnd")?.toLong(),
                 genres = body.toGenreNames(),
@@ -154,6 +159,7 @@ class StreammoreApi(
         duration: Long,
         season: Int? = null,
         episode: Int? = null,
+        upNext: NextEpisodeInfo? = null,
     ) = withContext(Dispatchers.IO) {
         post("/api/progress", JSONObject().apply {
             put("profileId", profileId)
@@ -164,6 +170,13 @@ class StreammoreApi(
             put("duration", duration / 1000.0)
             season?.let { put("season", it) }
             episode?.let { put("episode", it) }
+            upNext?.let { next ->
+                put("upNext", JSONObject().apply {
+                    put("season", next.season)
+                    put("episode", next.episode)
+                    put("title", next.title)
+                })
+            }
         })
     }
 

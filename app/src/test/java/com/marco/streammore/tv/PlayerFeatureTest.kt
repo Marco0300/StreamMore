@@ -35,6 +35,10 @@ class PlayerFeatureTest {
     }
 
     @Test
+    fun finishedProgressUsesTheStoredNextSeasonResumePoint() {
+        assertEquals(ResumePoint(2, 1), resumePointForProgress(1, 10, percent = 0.98, nextSeason = 2, nextEpisode = 1))
+    }
+    @Test
     fun qualityLabelsExposeAutoAndCommonCaps() {
         assertEquals("Auto", VideoQuality.Auto.label)
         assertEquals("1080p", VideoQuality.P1080.label)

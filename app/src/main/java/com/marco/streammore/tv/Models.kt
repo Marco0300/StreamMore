@@ -136,6 +136,7 @@ data class TitleDetail(
     val resumePositionMs: Long? = null,
     val resumeSeason: Int? = null,
     val resumeEpisode: Int? = null,
+    val resumeNext: Boolean = false,
     val introEndSeconds: Long? = null,
     val recapEndSeconds: Long? = null,
     val genres: List<String> = emptyList(),
@@ -201,8 +202,30 @@ data class ResumePoint(val season: Int, val episode: Int)
 internal fun resumePointFrom(season: Int?, episode: Int?): ResumePoint? =
     if (season != null && season > 0 && episode != null && episode > 0) ResumePoint(season, episode) else null
 
-fun JSONObject.toResumePoint(): ResumePoint? =
-    resumePointFrom(intOrNull("season"), intOrNull("episode"))
+internal fun resumePointForProgress(
+    season: Int?,
+    episode: Int?,
+    percent: Double,
+    nextSeason: Int? = null,
+    nextEpisode: Int? = null,
+): ResumePoint? =
+    if (percent >= 0.95) {
+        resumePointFrom(nextSeason, nextEpisode) ?: resumePointFrom(season, episode)
+    } else {
+        resumePointFrom(season, episode)
+    }
+
+fun JSONObject.toResumePoint(): ResumePoint? {
+    val percent = doubleOrNull("percent") ?: progressFraction(doubleOrNull("position"), doubleOrNull("duration"))
+    val next = optJSONObject("upNext")
+    return resumePointForProgress(
+        season = intOrNull("season"),
+        episode = intOrNull("episode"),
+        percent = percent,
+        nextSeason = next?.intOrNull("season"),
+        nextEpisode = next?.intOrNull("episode"),
+    )
+}
 
 fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     mediaType = optString("mediaType", "movie"),

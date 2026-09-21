@@ -506,17 +506,45 @@ internal fun StreammoreTvApp() {
                             { screen = TvScreen.Home },
                             {
                                 if (active.mediaType == "tv") {
-                                    play(
-                                        "tv",
-                                        active.tmdbId,
-                                        active.title,
-                                        active.resumeSeason ?: 1,
-                                        active.resumeEpisode ?: 1,
-                                        nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1, active.seasons),
-                                        active.resumePositionMs,
-                                        active.introEndSeconds,
-                                        active.recapEndSeconds,
-                                    )
+                                    val resumeSeason = active.resumeSeason ?: 1
+                                    val resumeEpisode = active.resumeEpisode ?: 1
+                                    val completedTarget = if (active.progress >= 0.95 && !active.resumeNext) {
+                                        nextEpisodeAfter(episodes, resumeSeason, resumeEpisode, active.seasons)
+                                    } else {
+                                        null
+                                    }
+                                    if (completedTarget != null) {
+                                        scope.launch {
+                                            val targetEpisodes = profileId?.let { id ->
+                                                runCatching { api.season(active.tmdbId, completedTarget.season, id) }.getOrDefault(emptyList())
+                                            } ?: emptyList()
+                                            if (targetEpisodes.isNotEmpty()) episodes = targetEpisodes
+                                            val targetEpisode = targetEpisodes.firstOrNull { it.number == completedTarget.episode }
+                                            play(
+                                                "tv",
+                                                active.tmdbId,
+                                                active.title,
+                                                completedTarget.season,
+                                                completedTarget.episode,
+                                                nextEpisodeAfter(targetEpisodes, completedTarget.season, completedTarget.episode, active.seasons),
+                                                targetEpisode?.positionMs,
+                                                active.introEndSeconds,
+                                                active.recapEndSeconds,
+                                            )
+                                        }
+                                    } else {
+                                        play(
+                                            "tv",
+                                            active.tmdbId,
+                                            active.title,
+                                            resumeSeason,
+                                            resumeEpisode,
+                                            nextEpisodeAfter(episodes, resumeSeason, resumeEpisode, active.seasons),
+                                            active.resumePositionMs,
+                                            active.introEndSeconds,
+                                            active.recapEndSeconds,
+                                        )
+                                    }
                                 } else {
                                     play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs, introEndSeconds = active.introEndSeconds, recapEndSeconds = active.recapEndSeconds)
                                 }
@@ -576,6 +604,7 @@ internal fun StreammoreTvApp() {
                                             duration = duration,
                                             season = current.season,
                                             episode = current.episode,
+                                            upNext = current.nextEpisode,
                                         )
                                     }
                                 }
