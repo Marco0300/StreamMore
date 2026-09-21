@@ -2035,7 +2035,10 @@ internal fun PlayerScreen(
                 useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             } },
-            Modifier.fillMaxSize(),
+            update = { view ->
+                if (view.player !== player) view.player = player
+            },
+            modifier = Modifier.fillMaxSize(),
         )
         if (chromeVisible) {
             Box(
