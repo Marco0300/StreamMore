@@ -101,6 +101,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackGroup
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -134,6 +137,36 @@ internal val MatchGreen = Color(0xFF46D369)
 internal val MetaText = Color(0xFFE5E5E5)
 internal val BadgeBorder = Color(0xFF777777)
 
+internal data class AvailableVideoQuality(
+    val label: String,
+    val group: TrackGroup,
+    val trackIndices: List<Int>,
+)
+
+/**
+ * Mirrors the web player's HLS level menu: expose only video renditions that
+ * Media3 actually discovered in the source's current track groups.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun availableVideoQualities(tracks: Tracks): List<AvailableVideoQuality> {
+    return tracks.groups
+        .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSupported(false) }
+        .flatMap { group ->
+            val byLabel = linkedMapOf<String, MutableList<Int>>()
+            for (index in 0 until group.length) {
+                val format = group.getTrackFormat(index)
+                val label = when {
+                    format.height > 0 -> "${format.height}p"
+                    format.bitrate > 0 -> "${format.bitrate / 1000}kbps"
+                    else -> "Video ${index + 1}"
+                }
+                byLabel.getOrPut(label) { mutableListOf() }.add(index)
+            }
+            byLabel.map { (label, indices) -> AvailableVideoQuality(label, group.mediaTrackGroup, indices) }
+        }
+        .distinctBy { "${it.group.id}:${it.label}" }
+        .sortedWith(compareByDescending<AvailableVideoQuality> { it.label.removeSuffix("p").toIntOrNull() ?: 0 }.thenBy { it.label })
+}
 internal val StreammoreScheme = darkColorScheme(
     primary = Purple,
     onPrimary = Color.White,
@@ -1760,7 +1793,8 @@ internal fun PlayerScreen(
     var settingsMenuOpen by remember(source) { mutableStateOf(false) }
     var autoNextEnabled by remember(source) { mutableStateOf(true) }
     var selectedSubtitle by remember(source) { mutableStateOf<String?>(null) }
-    var selectedQuality by remember(source) { mutableStateOf(VideoQuality.Auto) }
+    var selectedQualityLabel by remember(source) { mutableStateOf("Auto") }
+    var availableQualities by remember(source) { mutableStateOf<List<AvailableVideoQuality>>(emptyList()) }
     var nextPromptVisible by remember(source, nextEpisode) { mutableStateOf(false) }
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
     var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
@@ -1788,6 +1822,9 @@ internal fun PlayerScreen(
             .build()
             .apply {
                 addListener(object : Player.Listener {
+                    override fun onTracksChanged(tracks: Tracks) {
+                        availableQualities = availableVideoQualities(tracks)
+                    }
                     override fun onPlayerError(error: PlaybackException) {
                         playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
                         Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
@@ -1817,24 +1854,19 @@ internal fun PlayerScreen(
         runCatching { playerFocus.requestFocus() }
     }
 
-    fun applyQuality(quality: VideoQuality) {
+    fun applyQuality(quality: AvailableVideoQuality?) {
         val parameters = trackSelector.buildUponParameters()
-        when (quality) {
-            VideoQuality.Auto -> parameters
-                .clearVideoSizeConstraints()
-                .setForceLowestBitrate(false)
-                .setForceHighestSupportedBitrate(false)
-            VideoQuality.DataSaver -> parameters
-                .setMaxVideoSize(quality.width, quality.height)
-                .setForceLowestBitrate(true)
-                .setForceHighestSupportedBitrate(false)
-            else -> parameters
-                .setMaxVideoSize(quality.width, quality.height)
-                .setForceLowestBitrate(false)
-                .setForceHighestSupportedBitrate(false)
+            .clearVideoSizeConstraints()
+            .clearOverridesOfType(C.TRACK_TYPE_VIDEO)
+            .setForceLowestBitrate(false)
+            .setForceHighestSupportedBitrate(false)
+        if (quality != null) {
+            parameters.addOverride(TrackSelectionOverride(quality.group, quality.trackIndices))
+            selectedQualityLabel = quality.label
+        } else {
+            selectedQualityLabel = "Auto"
         }
         trackSelector.parameters = parameters.build()
-        selectedQuality = quality
         qualityMenuOpen = false
     }
 
@@ -2117,7 +2149,7 @@ internal fun PlayerScreen(
                     TvButton(
                         onClick = { qualityMenuOpen = !qualityMenuOpen },
                         modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus)),
-                    ) { Text("▦ ${selectedQuality.label}", color = TextPrimary, fontSize = 13.sp) }
+                    ) { Text("▦ $selectedQualityLabel", color = TextPrimary, fontSize = 13.sp) }
                     TvButton(onClick = { settingsMenuOpen = !settingsMenuOpen }, modifier = keepControlsVisible()) {
                         Text("⚙", color = TextPrimary, fontSize = 14.sp)
                     }
@@ -2132,9 +2164,20 @@ internal fun PlayerScreen(
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("VIDEO QUALITY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        VideoQuality.entries.forEach { quality ->
-                            TvButton(onClick = { applyQuality(quality) }, selected = quality == selectedQuality, modifier = Modifier.fillMaxWidth()) {
-                                Text(quality.label, color = TextPrimary, fontSize = 14.sp)
+                        TvButton(onClick = { applyQuality(null) }, selected = selectedQualityLabel == "Auto", modifier = Modifier.fillMaxWidth()) {
+                            Text("Auto", color = TextPrimary, fontSize = 14.sp)
+                        }
+                        if (availableQualities.isEmpty()) {
+                            Text("Waiting for stream renditions…", color = Muted, fontSize = 12.sp)
+                        } else {
+                            availableQualities.forEach { quality ->
+                                TvButton(
+                                    onClick = { applyQuality(quality) },
+                                    selected = quality.label == selectedQualityLabel,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(quality.label, color = TextPrimary, fontSize = 14.sp)
+                                }
                             }
                         }
                     }
