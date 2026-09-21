@@ -274,13 +274,22 @@ internal fun StreammoreTvApp() {
     // of always dumping the user back onto Home.
     var playerReturn by remember { mutableStateOf<TvScreen?>(null) }
 
+    LaunchedEffect(error) {
+        if (error != null) {
+            delay(5_000)
+            error = null
+        }
+    }
+
     fun loadProfiles() = scope.launch {
+        error = null
         loading = true
         runCatching { api.profiles() }.onSuccess { profiles = it; screen = TvScreen.Profiles }
             .onFailure { error = it.message ?: "Could not load profiles" }
         loading = false
     }
     fun loadHome(id: String) = scope.launch {
+        error = null
         profileId = id; loading = true
         runCatching { api.home(id) }
             .onSuccess { data ->
@@ -319,6 +328,7 @@ internal fun StreammoreTvApp() {
     }
     fun loadCards(mediaType: String) = scope.launch {
         val id = profileId ?: return@launch
+        error = null
         loading = true
         runCatching {
             val page = api.browse(mediaType, id, 1)
@@ -337,6 +347,7 @@ internal fun StreammoreTvApp() {
     }
     fun loadBrowseGenre(mediaType: String, genre: GenreOption?) = scope.launch {
         val id = profileId ?: return@launch
+        error = null
         loading = true
         runCatching {
             if (genre == null) api.browse(mediaType, id, 1) else api.genre(mediaType, genre.id, id, 1)
@@ -367,6 +378,7 @@ internal fun StreammoreTvApp() {
     }
     fun openDetail(card: MediaCard) = scope.launch {
         val id = profileId ?: return@launch
+        error = null
         loading = true; detail = null; episodes = emptyList(); screen = TvScreen.Detail(card.mediaType, card.tmdbId)
         runCatching { api.detail(card.mediaType, card.tmdbId, id) }
             .onSuccess { loaded ->
@@ -397,6 +409,7 @@ internal fun StreammoreTvApp() {
         year: String? = null,
     ) = scope.launch {
         val id = profileId ?: return@launch
+        error = null
         playerReturn = if (screen is TvScreen.Player) playerReturn else screen
         loading = true
         runCatching {
@@ -426,7 +439,8 @@ internal fun StreammoreTvApp() {
     }
     fun loadLive() = scope.launch {
         val id = profileId ?: return@launch
-        error = null; screen = TvScreen.Live; loading = true
+        error = null
+        screen = TvScreen.Live; loading = true
         runCatching { api.liveChannels(id) }.onSuccess { liveChannels = it }
             .onFailure { error = it.message ?: "Could not load Live TV" }
         loading = false
@@ -548,7 +562,7 @@ internal fun StreammoreTvApp() {
         Surface(Modifier.fillMaxSize(), color = Bg) {
             Box(Modifier.fillMaxSize()) {
                 when (val current = screen) {
-                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
+                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
                     TvScreen.Profiles -> ProfileScreen(profiles, error) { profile ->
                         if (profile.kids && profile.hasPin) {
                             pendingProfile = profile
