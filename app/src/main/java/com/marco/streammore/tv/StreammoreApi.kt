@@ -55,6 +55,7 @@ class StreammoreApi(
             val castJson = body.optJSONArray("cast") ?: JSONArray()
             val progressJson = body.optJSONObject("progress")
             val resume = progressJson?.toResumePoint()
+            val marker = body.optJSONObject("marker")
             TitleDetail(
                 mediaType = body.optString("mediaType", mediaType),
                 tmdbId = body.optInt("tmdbId", tmdbId),
@@ -78,6 +79,8 @@ class StreammoreApi(
                 },
                 resumeSeason = resume?.season,
                 resumeEpisode = resume?.episode,
+                introEndSeconds = marker?.doubleOrNull("introEnd")?.toLong(),
+                recapEndSeconds = marker?.doubleOrNull("recapEnd")?.toLong(),
                 genres = body.toGenreNames(),
                 seasons = List(seasonsJson.length()) {
                     val s = seasonsJson.getJSONObject(it)
@@ -216,6 +219,11 @@ class StreammoreApi(
             if (value == null) put("value", JSONObject.NULL) else put("value", value)
         })
         if (body.isNull("rating")) null else body.optString("rating", null)
+    }
+
+    suspend fun unlockProfile(profileId: String, pin: String): Boolean = withContext(Dispatchers.IO) {
+        post("/api/profiles/${enc(profileId)}/unlock", JSONObject().apply { put("pin", pin) })
+        true
     }
 
     suspend fun subtitles(mediaType: String, tmdbId: Int, season: Int? = null, episode: Int? = null): List<SubtitleTrack> = withContext(Dispatchers.IO) {

@@ -8,6 +8,7 @@ data class Profile(
     val name: String,
     val avatar: String? = null,
     val kids: Boolean = false,
+    val hasPin: Boolean = false,
 )
 
 data class MediaCard(
@@ -130,6 +131,8 @@ data class TitleDetail(
     val resumePositionMs: Long? = null,
     val resumeSeason: Int? = null,
     val resumeEpisode: Int? = null,
+    val introEndSeconds: Long? = null,
+    val recapEndSeconds: Long? = null,
     val genres: List<String> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val cast: List<Person> = emptyList(),
@@ -253,4 +256,5 @@ fun JSONObject.toProfile(): Profile = Profile(
     name = optString("name", "Profile"),
     avatar = optString("avatar", null),
     kids = optBoolean("kids", false),
+    hasPin = optBoolean("hasPin", false),
 )

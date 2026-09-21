@@ -166,6 +166,7 @@ internal fun formatPlayerTime(milliseconds: Long): String {
 internal sealed interface TvScreen {
     data object Login : TvScreen
     data object Profiles : TvScreen
+    data class ProfilePin(val profileId: String) : TvScreen
     data object Home : TvScreen
     data class Browse(val mediaType: String) : TvScreen
     data object Search : TvScreen
@@ -184,6 +185,9 @@ internal sealed interface TvScreen {
         val season: Int? = null,
         val episode: Int? = null,
         val initialPositionMs: Long? = null,
+        val sources: List<StreamSource> = emptyList(),
+        val introEndSeconds: Long? = null,
+        val recapEndSeconds: Long? = null,
     ) : TvScreen
 }
 
@@ -201,6 +205,7 @@ internal fun StreammoreTvApp() {
     val scope = rememberCoroutineScope()
     var screen by remember { mutableStateOf<TvScreen>(TvScreen.Login) }
     var profiles by remember { mutableStateOf<List<Profile>>(emptyList()) }
+    var pendingProfile by remember { mutableStateOf<Profile?>(null) }
     var profileId by remember { mutableStateOf<String?>(null) }
     var rows by remember { mutableStateOf<List<HomeRow>>(emptyList()) }
     var billboard by remember { mutableStateOf<Billboard?>(null) }
@@ -322,12 +327,15 @@ internal fun StreammoreTvApp() {
         episode: Int? = null,
         nextEpisode: NextEpisodeInfo? = null,
         initialPositionMs: Long? = null,
+        introEndSeconds: Long? = null,
+        recapEndSeconds: Long? = null,
     ) = scope.launch {
         val id = profileId ?: return@launch
         playerReturn = if (screen is TvScreen.Player) playerReturn else screen
         loading = true
         runCatching {
-            val source = api.streams(mediaType, tmdbId, id, season, episode).firstOrNull()
+            val sources = api.streams(mediaType, tmdbId, id, season, episode)
+            val source = sources.firstOrNull()
                 ?: error("No playable sources were found")
             val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
             TvScreen.Player(
@@ -340,6 +348,9 @@ internal fun StreammoreTvApp() {
                 season,
                 episode,
                 initialPositionMs,
+                sources,
+                introEndSeconds,
+                recapEndSeconds,
             )
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
@@ -393,7 +404,25 @@ internal fun StreammoreTvApp() {
             Box(Modifier.fillMaxSize()) {
                 when (val current = screen) {
                     TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
-                    TvScreen.Profiles -> ProfileScreen(profiles, error, ::loadHome)
+                    TvScreen.Profiles -> ProfileScreen(profiles, error) { profile ->
+                        if (profile.kids && profile.hasPin) {
+                            pendingProfile = profile
+                            screen = TvScreen.ProfilePin(profile.id)
+                        } else loadHome(profile.id)
+                    }
+                    is TvScreen.ProfilePin -> {
+                        val profile = pendingProfile ?: profiles.firstOrNull { it.id == current.profileId }
+                        if (profile == null) ProfileScreen(profiles, error) { loadHome(it.id) }
+                        else ProfilePinScreen(profile, error) { pin ->
+                            scope.launch {
+                                loading = true
+                                runCatching { api.unlockProfile(profile.id, pin) }
+                                    .onSuccess { pendingProfile = null; loadHome(profile.id) }
+                                    .onFailure { error = it.message ?: "Incorrect profile PIN" }
+                                loading = false
+                            }
+                        }
+                    }
                     TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
                         HomeScreen(
                             rows = rows,
@@ -448,9 +477,11 @@ internal fun StreammoreTvApp() {
                                         active.resumeEpisode ?: 1,
                                         nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1),
                                         active.resumePositionMs,
+                                        active.introEndSeconds,
+                                        active.recapEndSeconds,
                                     )
                                 } else {
-                                    play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs)
+                                    play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs, introEndSeconds = active.introEndSeconds, recapEndSeconds = active.recapEndSeconds)
                                 }
                             },
                             { season -> profileId?.let { id -> scope.launch { runCatching { api.season(active.tmdbId, season, id) }.onSuccess { episodes = it }.onFailure { error = it.message ?: "Could not load episodes" } } } },
@@ -463,6 +494,8 @@ internal fun StreammoreTvApp() {
                                     episode,
                                     nextEpisodeAfter(episodes, season, episode),
                                     episodes.firstOrNull { it.number == episode }?.positionMs,
+                                    active.introEndSeconds,
+                                    active.recapEndSeconds,
                                 )
                             },
                             { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
@@ -477,7 +510,19 @@ internal fun StreammoreTvApp() {
                         current.subtitles,
                         api.sessionCookie(),
                         current.nextEpisode,
+                        current.sources,
+                        episodes,
+                        { selected, position ->
+                            screen = current.copy(source = selected.url, initialPositionMs = position)
+                        },
+                        { selectedEpisode ->
+                            if (current.season != null) {
+                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number), selectedEpisode.positionMs)
+                            }
+                        },
                         current.initialPositionMs,
+                        current.introEndSeconds,
+                        current.recapEndSeconds,
                         { position, duration ->
                             val profile = profileId
                             val mediaType = current.mediaType
@@ -706,6 +751,9 @@ internal fun MediaCardView(card: MediaCard, onClick: (MediaCard) -> Unit, modifi
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        card.sub?.takeIf { it.isNotBlank() }?.let {
+            Text(it, color = Purple, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Text(
             listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · "),
             color = Muted,
@@ -835,7 +883,28 @@ internal fun LoginScreen(loading: Boolean, error: String?, onLogin: (String, Str
 }
 
 @Composable
-internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (String) -> Unit) {
+internal fun ProfilePinScreen(profile: Profile, error: String?, onSubmit: (String) -> Unit) {
+    var pin by remember(profile.id) { mutableStateOf("") }
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Profile locked", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            Text("Enter the PIN for ${profile.name}", color = Muted, fontSize = 15.sp)
+            OutlinedTextField(
+                value = pin,
+                onValueChange = { value -> if (value.length <= 4 && value.all(Char::isDigit)) pin = value },
+                label = { Text("4-digit PIN") },
+                singleLine = true,
+            )
+            TvButton(onClick = { if (pin.length == 4) onSubmit(pin) }, primary = true) {
+                Text("Unlock", fontSize = 15.sp)
+            }
+            error?.let { Text(it, color = ErrorText, fontSize = 14.sp) }
+        }
+    }
+}
+
+@Composable
+internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (Profile) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Who's watching?", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
@@ -847,7 +916,7 @@ internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (S
                     profiles.forEach { profile ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(154.dp)) {
                             TvCard(
-                                { onSelect(profile.id) },
+                                { onSelect(profile) },
                                 Modifier.size(142.dp),
                                 shape = CircleShape,
                             ) {
@@ -1666,7 +1735,13 @@ internal fun PlayerScreen(
     subtitles: List<SubtitleTrack>,
     cookie: String?,
     nextEpisode: NextEpisodeInfo? = null,
+    sources: List<StreamSource> = emptyList(),
+    episodeList: List<Episode> = emptyList(),
+    onSelectSource: (StreamSource, Long) -> Unit = { _, _ -> },
+    onSelectEpisode: (Episode) -> Unit = {},
     initialPositionMs: Long? = null,
+    introEndSeconds: Long? = null,
+    recapEndSeconds: Long? = null,
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
@@ -1676,6 +1751,12 @@ internal fun PlayerScreen(
     var chromeVisible by remember(source) { mutableStateOf(false) }
     var interactionTick by remember(source) { mutableStateOf(0) }
     var qualityMenuOpen by remember(source) { mutableStateOf(false) }
+    var subtitleMenuOpen by remember(source) { mutableStateOf(false) }
+    var sourceMenuOpen by remember(source) { mutableStateOf(false) }
+    var episodeMenuOpen by remember(source) { mutableStateOf(false) }
+    var settingsMenuOpen by remember(source) { mutableStateOf(false) }
+    var autoNextEnabled by remember(source) { mutableStateOf(true) }
+    var selectedSubtitle by remember(source) { mutableStateOf<String?>(null) }
     var selectedQuality by remember(source) { mutableStateOf(VideoQuality.Auto) }
     var nextPromptVisible by remember(source, nextEpisode) { mutableStateOf(false) }
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
@@ -1685,6 +1766,8 @@ internal fun PlayerScreen(
     var playbackDuration by remember(source) { mutableStateOf(0L) }
     var isPlaying by remember(source) { mutableStateOf(true) }
     var volume by remember(source) { mutableStateOf(1f) }
+    var skipLabel by remember(source) { mutableStateOf<String?>(null) }
+    var skipTargetMs by remember(source) { mutableStateOf<Long?>(null) }
     val qualityFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val trackSelector = remember(source) { DefaultTrackSelector(context) }
@@ -1743,6 +1826,16 @@ internal fun PlayerScreen(
         qualityMenuOpen = false
     }
 
+    fun applySubtitle(language: String?) {
+        val parameters = trackSelector.buildUponParameters()
+            .setRendererDisabled(C.TRACK_TYPE_TEXT, language == null)
+            .setPreferredTextLanguage(language)
+            .build()
+        trackSelector.parameters = parameters
+        selectedSubtitle = language
+        subtitleMenuOpen = false
+    }
+
     LaunchedEffect(player, nextEpisode, nextPromptDismissed) {
         if (nextEpisode == null || nextPromptDismissed) return@LaunchedEffect
         while (true) {
@@ -1752,7 +1845,7 @@ internal fun PlayerScreen(
                 val remaining = (duration - position).coerceAtLeast(0)
                 countdownSeconds = ((remaining + 999) / 1_000).toInt()
                 nextPromptVisible = true
-                if (remaining <= 0 && !nextStarted) {
+                if (remaining <= 0 && autoNextEnabled && !nextStarted) {
                     nextStarted = true
                     onPlayNext(nextEpisode)
                     break
@@ -1779,6 +1872,19 @@ internal fun PlayerScreen(
             playbackPosition = player.currentPosition.coerceAtLeast(0L)
             playbackDuration = player.duration.coerceAtLeast(0L)
             isPlaying = player.isPlaying
+            val seconds = playbackPosition / 1000L
+            val recap = recapEndSeconds ?: 0L
+            val intro = introEndSeconds ?: 0L
+            if (recap > 0 && seconds > 1 && seconds < recap - 2) {
+                skipLabel = "Skip recap"
+                skipTargetMs = recap * 1000L
+            } else if (intro > 0 && seconds > maxOf(recap, 1L) && seconds < intro - 2) {
+                skipLabel = "Skip intro"
+                skipTargetMs = intro * 1000L
+            } else {
+                skipLabel = null
+                skipTargetMs = null
+            }
             delay(250)
         }
     }
@@ -1833,18 +1939,28 @@ internal fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Black)
             .onPreviewKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key in setOf(
+                if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
+                    player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
+                    chromeVisible = true
+                    interactionTick++
+                    true
+                } else if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionRight) {
+                    player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L)))
+                    chromeVisible = true
+                    interactionTick++
+                    true
+                } else if (event.type == KeyEventType.KeyDown && event.key in setOf(
                         Key.DirectionUp,
                         Key.DirectionDown,
-                        Key.DirectionLeft,
-                        Key.DirectionRight,
                         Key.DirectionCenter,
                         Key.Enter,
                     )) {
                     chromeVisible = true
                     interactionTick++
+                    false
+                } else {
+                    false
                 }
-                false
             },
     ) {
         AndroidView(
@@ -1887,6 +2003,14 @@ internal fun PlayerScreen(
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp, vertical = 22.dp),
             ) {
+                if (skipLabel != null && skipTargetMs != null) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TvButton(onClick = { player.seekTo(skipTargetMs!!); skipLabel = null }) {
+                            Text(skipLabel!!, color = TextPrimary, fontSize = 14.sp)
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
                 if (playbackDuration > 0L) {
                     Slider(
                         value = (playbackPosition.toFloat() / playbackDuration.toFloat()).coerceIn(0f, 1f),
@@ -1925,6 +2049,30 @@ internal fun PlayerScreen(
                         fontSize = 13.sp,
                     )
                     Spacer(Modifier.weight(1f))
+                    if (subtitles.isNotEmpty()) {
+                        TextButton(onClick = {
+                            subtitleMenuOpen = !subtitleMenuOpen
+                            qualityMenuOpen = false
+                            sourceMenuOpen = false
+                            episodeMenuOpen = false
+                        }) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
+                    }
+                    if (sources.size > 1) {
+                        TextButton(onClick = {
+                            sourceMenuOpen = !sourceMenuOpen
+                            qualityMenuOpen = false
+                            subtitleMenuOpen = false
+                            episodeMenuOpen = false
+                        }) { Text("☰ Sources", color = Color.White, fontSize = 13.sp) }
+                    }
+                    if (episodeList.isNotEmpty()) {
+                        TextButton(onClick = {
+                            episodeMenuOpen = !episodeMenuOpen
+                            qualityMenuOpen = false
+                            subtitleMenuOpen = false
+                            sourceMenuOpen = false
+                        }) { Text("▣ Episodes", color = Color.White, fontSize = 13.sp) }
+                    }
                     if (season != null && episode != null) {
                         TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = 13.sp) }
                     }
@@ -1932,6 +2080,9 @@ internal fun PlayerScreen(
                         onClick = { qualityMenuOpen = !qualityMenuOpen },
                         modifier = Modifier.focusRequester(qualityFocus),
                     ) { Text("▦ ${selectedQuality.label}", color = TextPrimary, fontSize = 13.sp) }
+                    TvButton(onClick = { settingsMenuOpen = !settingsMenuOpen }) {
+                        Text("⚙", color = TextPrimary, fontSize = 14.sp)
+                    }
                 }
             }
             if (qualityMenuOpen) {
@@ -1946,6 +2097,52 @@ internal fun PlayerScreen(
                         VideoQuality.entries.forEach { quality ->
                             TvButton(onClick = { applyQuality(quality) }, selected = quality == selectedQuality, modifier = Modifier.fillMaxWidth()) {
                                 Text(quality.label, color = TextPrimary, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            if (settingsMenuOpen) {
+                Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 240.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("PLAYER SETTINGS", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        TvButton(onClick = { autoNextEnabled = !autoNextEnabled }, selected = autoNextEnabled, modifier = Modifier.fillMaxWidth()) {
+                            Text("Auto-play next episode: ${if (autoNextEnabled) "On" else "Off"}", color = TextPrimary, fontSize = 14.sp)
+                        }
+                        Text("Quality and subtitles are available in the player bar.", color = Muted, fontSize = 12.sp)
+                    }
+                }
+            }
+            if (subtitleMenuOpen) {
+                Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 230.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("SUBTITLES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        TvButton(onClick = { applySubtitle(null) }, selected = selectedSubtitle == null, modifier = Modifier.fillMaxWidth()) { Text("Off", color = TextPrimary, fontSize = 14.sp) }
+                        subtitles.forEach { track ->
+                            TvButton(onClick = { applySubtitle(track.language) }, selected = selectedSubtitle == track.language, modifier = Modifier.fillMaxWidth()) { Text(track.label, color = TextPrimary, fontSize = 14.sp) }
+                        }
+                    }
+                }
+            }
+            if (sourceMenuOpen) {
+                Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 280.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("SOURCES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        sources.forEachIndexed { index, sourceItem ->
+                            TvButton(onClick = { onSelectSource(sourceItem, player.currentPosition); sourceMenuOpen = false }, selected = sourceItem.url == source, modifier = Modifier.fillMaxWidth()) {
+                                Text("${sourceItem.quality.ifBlank { "Source ${index + 1}" }} · ${sourceItem.name}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
+            if (episodeMenuOpen) {
+                Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 330.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("EPISODES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        episodeList.take(8).forEach { item ->
+                            TvButton(onClick = { onSelectEpisode(item); episodeMenuOpen = false }, selected = item.number == episode, modifier = Modifier.fillMaxWidth()) {
+                                Text("${item.number}. ${item.name}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
