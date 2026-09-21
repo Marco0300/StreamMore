@@ -53,6 +53,8 @@ class StreammoreApi(
             val body = get("/api/title/$mediaType/$tmdbId?profileId=${enc(profileId)}")
             val seasonsJson = body.optJSONArray("seasons") ?: JSONArray()
             val castJson = body.optJSONArray("cast") ?: JSONArray()
+            val progressJson = body.optJSONObject("progress")
+            val resume = progressJson?.toResumePoint()
             TitleDetail(
                 mediaType = body.optString("mediaType", mediaType),
                 tmdbId = body.optInt("tmdbId", tmdbId),
@@ -66,7 +68,9 @@ class StreammoreApi(
                 tagline = body.optString("tagline", null),
                 inMyList = body.optBoolean("inMyList", false),
                 myRating = body.optString("myRating", null),
-                progress = body.optJSONObject("progress")?.optDouble("percent", 0.0) ?: 0.0,
+                progress = progressJson?.optDouble("percent", 0.0) ?: 0.0,
+                resumeSeason = resume?.season,
+                resumeEpisode = resume?.episode,
                 genres = body.toGenreNames(),
                 seasons = List(seasonsJson.length()) {
                     val s = seasonsJson.getJSONObject(it)
@@ -121,6 +125,28 @@ class StreammoreApi(
                 )
             }
         }
+
+    suspend fun saveProgress(
+        profileId: String,
+        mediaType: String,
+        tmdbId: Int,
+        title: String,
+        position: Long,
+        duration: Long,
+        season: Int? = null,
+        episode: Int? = null,
+    ) = withContext(Dispatchers.IO) {
+        post("/api/progress", JSONObject().apply {
+            put("profileId", profileId)
+            put("mediaType", mediaType)
+            put("tmdbId", tmdbId)
+            put("title", title)
+            put("position", position / 1000.0)
+            put("duration", duration / 1000.0)
+            season?.let { put("season", it) }
+            episode?.let { put("episode", it) }
+        })
+    }
 
     suspend fun browse(mediaType: String, profileId: String, page: Int = 1): BrowsePage =
         withContext(Dispatchers.IO) {

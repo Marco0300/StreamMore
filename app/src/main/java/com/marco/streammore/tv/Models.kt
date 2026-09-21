@@ -124,6 +124,8 @@ data class TitleDetail(
     val inMyList: Boolean = false,
     val myRating: String? = null,
     val progress: Double = 0.0,
+    val resumeSeason: Int? = null,
+    val resumeEpisode: Int? = null,
     val genres: List<String> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val cast: List<Person> = emptyList(),
@@ -165,6 +167,17 @@ fun JSONObject.toGenreNames(): List<String> {
         runCatching { values.getJSONObject(index).getString("name") }.getOrNull()
     })
 }
+
+fun JSONObject.intOrNull(name: String): Int? =
+    if (has(name)) optInt(name, 0).takeIf { it > 0 } else null
+
+data class ResumePoint(val season: Int, val episode: Int)
+
+internal fun resumePointFrom(season: Int?, episode: Int?): ResumePoint? =
+    if (season != null && season > 0 && episode != null && episode > 0) ResumePoint(season, episode) else null
+
+fun JSONObject.toResumePoint(): ResumePoint? =
+    resumePointFrom(intOrNull("season"), intOrNull("episode"))
 
 fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     mediaType = optString("mediaType", "movie"),

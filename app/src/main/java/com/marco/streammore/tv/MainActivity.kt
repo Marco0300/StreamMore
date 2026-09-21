@@ -168,6 +168,10 @@ internal sealed interface TvScreen {
         val title: String,
         val subtitles: List<SubtitleTrack> = emptyList(),
         val nextEpisode: NextEpisodeInfo? = null,
+        val mediaType: String? = null,
+        val tmdbId: Int? = null,
+        val season: Int? = null,
+        val episode: Int? = null,
     ) : TvScreen
 }
 
@@ -287,11 +291,12 @@ internal fun StreammoreTvApp() {
         runCatching { api.detail(card.mediaType, card.tmdbId, id) }
             .onSuccess { loaded ->
                 detail = loaded
-                // The browser opens a show on its first season; without this the
-                // Episodes section renders empty until a season button is pressed.
+                // Open the season containing the saved episode so the detail page
+                // and its Play button agree about the resume location.
                 val first = loaded.seasons.firstOrNull()
-                if (loaded.mediaType == "tv" && first != null) {
-                    runCatching { api.season(loaded.tmdbId, first.number, id) }.onSuccess { episodes = it }
+                val resumeSeason = loaded.resumeSeason ?: first?.number
+                if (loaded.mediaType == "tv" && resumeSeason != null) {
+                    runCatching { api.season(loaded.tmdbId, resumeSeason, id) }.onSuccess { episodes = it }
                 }
             }
             .onFailure { error = it.message ?: "Could not load title" }
@@ -312,7 +317,16 @@ internal fun StreammoreTvApp() {
             val source = api.streams(mediaType, tmdbId, id, season, episode).firstOrNull()
                 ?: error("No playable sources were found")
             val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
-            TvScreen.Player(source.url, title, subs, nextEpisode?.copy(tmdbId = tmdbId))
+            TvScreen.Player(
+                source.url,
+                title,
+                subs,
+                nextEpisode?.copy(tmdbId = tmdbId),
+                mediaType,
+                tmdbId,
+                season,
+                episode,
+            )
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
     }
@@ -416,9 +430,9 @@ internal fun StreammoreTvApp() {
                                         "tv",
                                         active.tmdbId,
                                         active.title,
-                                        1,
-                                        1,
-                                        nextEpisodeAfter(episodes, 1, 1),
+                                        active.resumeSeason ?: 1,
+                                        active.resumeEpisode ?: 1,
+                                        nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1),
                                     )
                                 } else {
                                     play("movie", active.tmdbId, active.title)
@@ -436,6 +450,27 @@ internal fun StreammoreTvApp() {
                         current.subtitles,
                         api.sessionCookie(),
                         current.nextEpisode,
+                        { position, duration ->
+                            val profile = profileId
+                            val mediaType = current.mediaType
+                            val tmdbId = current.tmdbId
+                            if (profile != null && mediaType != null && tmdbId != null) {
+                                scope.launch {
+                                    runCatching {
+                                        api.saveProgress(
+                                            profileId = profile,
+                                            mediaType = mediaType,
+                                            tmdbId = tmdbId,
+                                            title = current.title,
+                                            position = position,
+                                            duration = duration,
+                                            season = current.season,
+                                            episode = current.episode,
+                                        )
+                                    }
+                                }
+                            }
+                        },
                         { next ->
                             play(
                                 "tv",
@@ -1311,7 +1346,7 @@ internal fun DetailScreen(
     onList: () -> Unit,
     onRate: (String?) -> Unit,
 ) {
-    var selectedSeason by remember(detail.tmdbId) { mutableStateOf(detail.seasons.firstOrNull()?.number ?: 1) }
+    var selectedSeason by remember(detail.tmdbId) { mutableStateOf(detail.resumeSeason ?: detail.seasons.firstOrNull()?.number ?: 1) }
     // Opening a title otherwise leaves nothing focused, so the first D-pad press
     // lands on "Back" and pressing OK appears to do nothing. Start on Play.
     val playFocus = remember(detail.tmdbId) { FocusRequester() }
@@ -1373,7 +1408,14 @@ internal fun DetailScreen(
                     Text(detail.overview, color = TextPrimary.copy(alpha = 0.85f), fontSize = 15.sp, modifier = Modifier.width(820.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                        TvButton(onPlay, Modifier.focusRequester(playFocus), primary = true) { Text("▶ Play", fontSize = 15.sp) }
+                        TvButton(onPlay, Modifier.focusRequester(playFocus), primary = true) {
+                            Text(
+                                if (detail.mediaType == "tv" && detail.resumeSeason != null && detail.resumeEpisode != null)
+                                    "▶ Resume S${detail.resumeSeason}E${detail.resumeEpisode}"
+                                else "▶ Play",
+                                fontSize = 15.sp,
+                            )
+                        }
                         TvButton(onList) {
                             Text(if (detail.inMyList) "✓ My List" else "+ My List", color = TextPrimary, fontSize = 15.sp)
                         }
@@ -1547,6 +1589,7 @@ internal fun PlayerScreen(
     subtitles: List<SubtitleTrack>,
     cookie: String?,
     nextEpisode: NextEpisodeInfo? = null,
+    onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
 ) {
@@ -1652,6 +1695,16 @@ internal fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(player) {
+        while (true) {
+            delay(10_000)
+            val duration = player.duration
+            if (duration > 0L && player.currentPosition >= 0L) {
+                onProgress(player.currentPosition, duration)
+            }
+        }
+    }
+
     LaunchedEffect(nextPromptVisible) {
         if (nextPromptVisible && !nextPromptDismissed) {
             delay(80)
@@ -1670,6 +1723,10 @@ internal fun PlayerScreen(
         }
         player.addListener(listener)
         onDispose {
+            val duration = player.duration
+            if (duration > 0L && player.currentPosition >= 0L) {
+                onProgress(player.currentPosition, duration)
+            }
             player.removeListener(listener)
             player.release()
         }
