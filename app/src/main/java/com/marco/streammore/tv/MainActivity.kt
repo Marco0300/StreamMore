@@ -52,6 +52,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -151,6 +153,15 @@ private val Gutter = 42.dp
 internal val PosterWidth = 104.dp
 internal val PosterHeight = 150.dp
 private val NavHeight = 54.dp
+
+internal fun formatPlayerTime(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000L).toInt()
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%d:%02d".format(minutes, seconds)
+}
 
 internal sealed interface TvScreen {
     data object Login : TvScreen
@@ -461,6 +472,8 @@ internal fun StreammoreTvApp() {
                     is TvScreen.Player -> PlayerScreen(
                         current.source,
                         current.title,
+                        current.season,
+                        current.episode,
                         current.subtitles,
                         api.sessionCookie(),
                         current.nextEpisode,
@@ -1648,6 +1661,8 @@ internal fun LoadingScreen(error: String?) {
 internal fun PlayerScreen(
     source: String,
     title: String,
+    season: Int? = null,
+    episode: Int? = null,
     subtitles: List<SubtitleTrack>,
     cookie: String?,
     nextEpisode: NextEpisodeInfo? = null,
@@ -1666,6 +1681,10 @@ internal fun PlayerScreen(
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
     var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
     var nextStarted by remember(source, nextEpisode) { mutableStateOf(false) }
+    var playbackPosition by remember(source) { mutableStateOf(0L) }
+    var playbackDuration by remember(source) { mutableStateOf(0L) }
+    var isPlaying by remember(source) { mutableStateOf(true) }
+    var volume by remember(source) { mutableStateOf(1f) }
     val qualityFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val trackSelector = remember(source) { DefaultTrackSelector(context) }
@@ -1683,6 +1702,9 @@ internal fun PlayerScreen(
                     override fun onPlayerError(error: PlaybackException) {
                         playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
                         Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
+                    }
+                    override fun onIsPlayingChanged(playing: Boolean) {
+                        isPlaying = playing
                     }
                 })
                 val tracks = subtitles.map { item ->
@@ -1749,6 +1771,15 @@ internal fun PlayerScreen(
         if (chromeVisible) {
             delay(80)
             qualityFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(player, chromeVisible) {
+        while (chromeVisible) {
+            playbackPosition = player.currentPosition.coerceAtLeast(0L)
+            playbackDuration = player.duration.coerceAtLeast(0L)
+            isPlaying = player.isPlaying
+            delay(250)
         }
     }
 
@@ -1819,53 +1850,101 @@ internal fun PlayerScreen(
         AndroidView(
             { PlayerView(it).apply {
                 this.player = player
-                useController = true
-                controllerShowTimeoutMs = 5_000
-                controllerHideOnTouch = true
+                useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             } },
             Modifier.fillMaxSize(),
         )
         if (chromeVisible) {
             Box(
-                Modifier.fillMaxWidth().height(170.dp).background(
+                Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
-                        0.0f to Color.Black.copy(alpha = 0.86f),
-                        0.72f to Color.Black.copy(alpha = 0.28f),
-                        1.0f to Color.Transparent,
+                        0.0f to Color.Black.copy(alpha = 0.72f),
+                        0.42f to Color.Transparent,
+                        0.70f to Color.Transparent,
+                        1.0f to Color.Black.copy(alpha = 0.90f),
                     ),
                 ),
             )
-            Column(Modifier.padding(start = 34.dp, top = 26.dp).fillMaxWidth(0.82f)) {
-                Text("NOW PLAYING", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                Spacer(Modifier.height(5.dp))
-                Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 24.dp, top = 20.dp, end = 28.dp),
+                verticalAlignment = Alignment.Top,
+            ) {
+                TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
+                    Text("←", color = Color.White, fontSize = 26.sp)
+                }
+                Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                    Text("NOW PLAYING", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        if (season != null && episode != null) "S${season}E${episode} · Streammore" else "Streammore",
+                        color = Muted,
+                        fontSize = 13.sp,
+                    )
+                }
             }
 
-            TvButton(
-                onClick = { qualityMenuOpen = !qualityMenuOpen },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = 24.dp, end = 30.dp)
-                    .focusRequester(qualityFocus),
+            Column(
+                Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp, vertical = 22.dp),
             ) {
-                Text("⚙  ${selectedQuality.label}", color = TextPrimary, fontSize = 14.sp)
+                if (playbackDuration > 0L) {
+                    Slider(
+                        value = (playbackPosition.toFloat() / playbackDuration.toFloat()).coerceIn(0f, 1f),
+                        onValueChange = { fraction ->
+                            playbackPosition = (fraction * playbackDuration).toLong()
+                            player.seekTo(playbackPosition)
+                        },
+                        colors = SliderDefaults.colors(
+                            thumbColor = Purple,
+                            activeTrackColor = Purple,
+                            inactiveTrackColor = Color.White.copy(alpha = 0.28f),
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(24.dp),
+                    )
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = { player.playWhenReady = !player.isPlaying }) {
+                        Text(if (isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 25.sp)
+                    }
+                    TextButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }) {
+                        Text("↶10", color = Color.White, fontSize = 15.sp)
+                    }
+                    TextButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }) {
+                        Text("10↷", color = Color.White, fontSize = 15.sp)
+                    }
+                    Text("🔊", color = Color.White, fontSize = 15.sp)
+                    Slider(
+                        value = volume,
+                        onValueChange = { value -> volume = value; player.volume = value },
+                        colors = SliderDefaults.colors(thumbColor = Purple, activeTrackColor = Purple, inactiveTrackColor = Color.White.copy(alpha = 0.28f)),
+                        modifier = Modifier.width(92.dp).height(24.dp),
+                    )
+                    Text(
+                        "${formatPlayerTime(playbackPosition)} / ${formatPlayerTime(playbackDuration)}",
+                        color = Color(0xFFE0DCE6),
+                        fontSize = 13.sp,
+                    )
+                    Spacer(Modifier.weight(1f))
+                    if (season != null && episode != null) {
+                        TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = 13.sp) }
+                    }
+                    TvButton(
+                        onClick = { qualityMenuOpen = !qualityMenuOpen },
+                        modifier = Modifier.focusRequester(qualityFocus),
+                    ) { Text("▦ ${selectedQuality.label}", color = TextPrimary, fontSize = 13.sp) }
+                }
             }
             if (qualityMenuOpen) {
                 Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 82.dp, end = 30.dp).widthIn(min = 180.dp),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 180.dp),
                     color = Panel.copy(alpha = 0.98f),
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(8.dp),
                     border = BorderStroke(1.dp, BorderIdle),
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("VIDEO QUALITY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         VideoQuality.entries.forEach { quality ->
-                            TvButton(
-                                onClick = { applyQuality(quality) },
-                                selected = quality == selectedQuality,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
+                            TvButton(onClick = { applyQuality(quality) }, selected = quality == selectedQuality, modifier = Modifier.fillMaxWidth()) {
                                 Text(quality.label, color = TextPrimary, fontSize = 14.sp)
                             }
                         }

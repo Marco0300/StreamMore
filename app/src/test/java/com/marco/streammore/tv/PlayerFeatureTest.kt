@@ -33,4 +33,11 @@ class PlayerFeatureTest {
         assertEquals("480p", VideoQuality.P480.label)
         assertEquals("Data Saver", VideoQuality.DataSaver.label)
     }
+
+    @Test
+    fun playerTimeMatchesTheWebPlayerFormat() {
+        assertEquals("0:00", formatPlayerTime(0))
+        assertEquals("1:05", formatPlayerTime(65_000))
+        assertEquals("1:02:03", formatPlayerTime(3_723_000))
+    }
 }
