@@ -1750,6 +1750,14 @@ private fun UpdatePrompt(
     onLater: () -> Unit,
     onUpdate: () -> Unit,
 ) {
+    val updateFocus = remember(update.versionName) { FocusRequester() }
+    LaunchedEffect(update.versionName, busy, error) {
+        if (!busy) {
+            delay(80)
+            runCatching { updateFocus.requestFocus() }
+        }
+    }
+
     Surface(
         modifier = modifier
             .padding(28.dp)
@@ -1773,7 +1781,11 @@ private fun UpdatePrompt(
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    TvButton(onClick = onUpdate, primary = true) { Text("Update now", fontSize = 14.sp) }
+                    TvButton(
+                        onClick = onUpdate,
+                        primary = true,
+                        modifier = Modifier.focusRequester(updateFocus),
+                    ) { Text("Update now", fontSize = 14.sp) }
                     TvButton(onClick = onLater) { Text("Later", color = TextPrimary, fontSize = 14.sp) }
                 }
             }
