@@ -210,6 +210,15 @@ class ScreenshotTest {
     }
 
     @Test
+    fun detailTvProgress() = shot("24-detail-tv-progress") {
+        val watchedEpisodes = listOf(
+            Fake.episodes[0].copy(progress = 0.5, positionMs = 300_000L),
+            Fake.episodes[1].copy(progress = 1.0, watched = true, positionMs = 600_000L),
+        )
+        DetailScreen(Fake.tvDetail, watchedEpisodes, null, { }, { }, { }, { _, _ -> }, { }, { })
+    }
+
+    @Test
     fun newHot() = shot("12-newhot") {
         AppShell(TvScreen.NewHot, { }, Fake.profiles[0]) {
             NewHotScreen(Fake.rows) { }

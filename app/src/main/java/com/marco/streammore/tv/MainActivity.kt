@@ -172,6 +172,7 @@ internal sealed interface TvScreen {
         val tmdbId: Int? = null,
         val season: Int? = null,
         val episode: Int? = null,
+        val initialPositionMs: Long? = null,
     ) : TvScreen
 }
 
@@ -309,6 +310,7 @@ internal fun StreammoreTvApp() {
         season: Int? = null,
         episode: Int? = null,
         nextEpisode: NextEpisodeInfo? = null,
+        initialPositionMs: Long? = null,
     ) = scope.launch {
         val id = profileId ?: return@launch
         playerReturn = if (screen is TvScreen.Player) playerReturn else screen
@@ -326,6 +328,7 @@ internal fun StreammoreTvApp() {
                 tmdbId,
                 season,
                 episode,
+                initialPositionMs,
             )
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
@@ -433,13 +436,24 @@ internal fun StreammoreTvApp() {
                                         active.resumeSeason ?: 1,
                                         active.resumeEpisode ?: 1,
                                         nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1),
+                                        active.resumePositionMs,
                                     )
                                 } else {
-                                    play("movie", active.tmdbId, active.title)
+                                    play("movie", active.tmdbId, active.title, initialPositionMs = active.resumePositionMs)
                                 }
                             },
                             { season -> profileId?.let { id -> scope.launch { runCatching { api.season(active.tmdbId, season, id) }.onSuccess { episodes = it }.onFailure { error = it.message ?: "Could not load episodes" } } } },
-                            { season, episode -> play("tv", active.tmdbId, active.title, season, episode, nextEpisodeAfter(episodes, season, episode)) },
+                            { season, episode ->
+                                play(
+                                    "tv",
+                                    active.tmdbId,
+                                    active.title,
+                                    season,
+                                    episode,
+                                    nextEpisodeAfter(episodes, season, episode),
+                                    episodes.firstOrNull { it.number == episode }?.positionMs,
+                                )
+                            },
                             { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
                             { value -> profileId?.let { id -> scope.launch { detail = active.copy(myRating = api.rate(id, active.mediaType, active.tmdbId, value)) } } },
                         )
@@ -450,6 +464,7 @@ internal fun StreammoreTvApp() {
                         current.subtitles,
                         api.sessionCookie(),
                         current.nextEpisode,
+                        current.initialPositionMs,
                         { position, duration ->
                             val profile = profileId
                             val mediaType = current.mediaType
@@ -1500,11 +1515,40 @@ private fun EpisodeRow(episode: Episode, onClick: () -> Unit) {
         horizontalAlignment = Alignment.Start,
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            AsyncImage(
-                episode.still, episode.name,
-                Modifier.width(112.dp).height(63.dp).clip(RoundedCornerShape(4.dp)),
-                contentScale = ContentScale.Crop,
-            )
+            Box(Modifier.width(112.dp).height(82.dp)) {
+                AsyncImage(
+                    episode.still, episode.name,
+                    Modifier.fillMaxWidth().height(63.dp).clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Crop,
+                )
+                if (episode.progress > 0.0) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(top = 64.dp)
+                            .fillMaxWidth()
+                            .height(4.dp)
+                            .background(Panel.copy(alpha = 0.95f))
+                            .clip(RoundedCornerShape(2.dp)),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth(episode.progress.toFloat())
+                                .height(4.dp)
+                                .background(if (episode.watched) Purple else Purple.copy(alpha = 0.9f)),
+                        )
+                    }
+                }
+                if (episode.watched) {
+                    Surface(
+                        Modifier.align(Alignment.TopStart).padding(5.dp),
+                        color = Color.Black.copy(alpha = 0.78f),
+                        shape = RoundedCornerShape(3.dp),
+                    ) {
+                        Text("WATCHED", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp))
+                    }
+                }
+            }
             Column(Modifier.padding(start = 16.dp).weight(1f)) {
                 Text(
                     "${episode.number}. ${episode.name}",
@@ -1607,6 +1651,7 @@ internal fun PlayerScreen(
     subtitles: List<SubtitleTrack>,
     cookie: String?,
     nextEpisode: NextEpisodeInfo? = null,
+    initialPositionMs: Long? = null,
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
@@ -1649,6 +1694,7 @@ internal fun PlayerScreen(
                         .build()
                 }
                 setMediaItem(MediaItem.Builder().setUri(Uri.parse(source)).setSubtitleConfigurations(tracks).build())
+                initialPositionMs?.takeIf { it > 0L }?.let { seekTo(it) }
                 prepare()
                 playWhenReady = true
             }

@@ -67,6 +67,9 @@ data class Episode(
     val name: String,
     val overview: String? = null,
     val still: String? = null,
+    val progress: Double = 0.0,
+    val watched: Boolean = false,
+    val positionMs: Long = 0L,
 )
 
 data class NextEpisodeInfo(
@@ -124,6 +127,7 @@ data class TitleDetail(
     val inMyList: Boolean = false,
     val myRating: String? = null,
     val progress: Double = 0.0,
+    val resumePositionMs: Long? = null,
     val resumeSeason: Int? = null,
     val resumeEpisode: Int? = null,
     val genres: List<String> = emptyList(),
@@ -170,6 +174,14 @@ fun JSONObject.toGenreNames(): List<String> {
 
 fun JSONObject.intOrNull(name: String): Int? =
     if (has(name)) optInt(name, 0).takeIf { it > 0 } else null
+
+fun JSONObject.doubleOrNull(name: String): Double? =
+    if (has(name) && !isNull(name)) optDouble(name).takeUnless { it.isNaN() } else null
+
+internal fun progressFraction(position: Double?, duration: Double?): Double =
+    if (position != null && duration != null && duration > 0.0) (position / duration).coerceIn(0.0, 1.0) else 0.0
+
+internal fun isWatchedProgress(progress: Double): Boolean = progress >= 0.95
 
 data class ResumePoint(val season: Int, val episode: Int)
 

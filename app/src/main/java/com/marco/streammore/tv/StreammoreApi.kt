@@ -69,6 +69,7 @@ class StreammoreApi(
                 inMyList = body.optBoolean("inMyList", false),
                 myRating = body.optString("myRating", null),
                 progress = progressJson?.optDouble("percent", 0.0) ?: 0.0,
+                resumePositionMs = progressJson?.doubleOrNull("position")?.let { (it * 1000.0).toLong() },
                 resumeSeason = resume?.season,
                 resumeEpisode = resume?.episode,
                 genres = body.toGenreNames(),
@@ -86,11 +87,16 @@ class StreammoreApi(
             val episodes = body.optJSONArray("episodes") ?: JSONArray()
             List(episodes.length()) {
                 val e = episodes.getJSONObject(it)
+                val progress = e.optJSONObject("progress")
+                val fraction = progressFraction(progress?.doubleOrNull("position"), progress?.doubleOrNull("duration"))
                 Episode(
                     number = e.optInt("number"),
                     name = e.optString("name", "Episode ${it + 1}"),
                     overview = e.optString("overview", null),
                     still = e.optString("still", null),
+                    progress = fraction,
+                    watched = isWatchedProgress(fraction),
+                    positionMs = progress?.doubleOrNull("position")?.let { seconds -> (seconds * 1000.0).toLong() } ?: 0L,
                 )
             }
         }
