@@ -1230,6 +1230,16 @@ internal fun DetailScreen(
                         ).joinToString(" · "),
                         color = Muted, fontSize = 14.sp,
                     )
+                    if (detail.genres.isNotEmpty()) {
+                        Text(
+                            "Genre · ${detail.genres.joinToString(" · ")}",
+                            color = Purple,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Spacer(Modifier.height(12.dp))
                     Text(detail.overview, color = TextPrimary.copy(alpha = 0.85f), fontSize = 15.sp, modifier = Modifier.width(820.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(16.dp))

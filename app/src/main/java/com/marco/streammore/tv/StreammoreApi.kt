@@ -67,6 +67,7 @@ class StreammoreApi(
                 inMyList = body.optBoolean("inMyList", false),
                 myRating = body.optString("myRating", null),
                 progress = body.optJSONObject("progress")?.optDouble("percent", 0.0) ?: 0.0,
+                genres = body.toGenreNames(),
                 seasons = List(seasonsJson.length()) {
                     val s = seasonsJson.getJSONObject(it)
                     Season(s.optInt("seasonNumber"), s.optString("name"), s.optInt("episodeCount"))

@@ -115,6 +115,7 @@ data class TitleDetail(
     val inMyList: Boolean = false,
     val myRating: String? = null,
     val progress: Double = 0.0,
+    val genres: List<String> = emptyList(),
     val seasons: List<Season> = emptyList(),
     val cast: List<Person> = emptyList(),
 )
@@ -145,6 +146,16 @@ data class ActivityEntry(
     val episode: Int? = null,
     val updatedAt: Long? = null,
 )
+
+internal fun genreNamesFrom(values: List<String?>): List<String> =
+    values.filterNotNull().filter { it.isNotBlank() }
+
+fun JSONObject.toGenreNames(): List<String> {
+    val values = runCatching { getJSONArray("genres") }.getOrNull() ?: JSONArray()
+    return genreNamesFrom((0 until values.length()).mapNotNull { index ->
+        runCatching { values.getJSONObject(index).getString("name") }.getOrNull()
+    })
+}
 
 fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     mediaType = optString("mediaType", "movie"),
