@@ -1,0 +1,188 @@
+package com.marco.streammore.tv
+
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class Profile(
+    val id: String,
+    val name: String,
+    val avatar: String? = null,
+    val kids: Boolean = false,
+)
+
+data class MediaCard(
+    val mediaType: String,
+    val tmdbId: Int,
+    val title: String,
+    val poster: String? = null,
+    val backdrop: String? = null,
+    val year: String? = null,
+    val rating: Double? = null,
+    val sub: String? = null,
+    val percent: Double = 0.0,
+    val ribbon: String? = null,
+    val season: Int? = null,
+    val episode: Int? = null,
+)
+
+data class HomeRow(
+    val id: String,
+    val title: String,
+    val items: List<MediaCard>,
+)
+
+/**
+ * The home-page hero. Mirrors the browser's `billboard` object: the backend picks a
+ * title from the trending row and attaches its YouTube `trailerKey`.
+ */
+data class Billboard(
+    val mediaType: String,
+    val tmdbId: Int,
+    val title: String,
+    val overview: String,
+    val backdrop: String? = null,
+    val poster: String? = null,
+    val year: String? = null,
+    val rating: Double? = null,
+    val trailerKey: String? = null,
+) {
+    fun toCard(): MediaCard = MediaCard(mediaType, tmdbId, title, poster, backdrop, year, rating)
+}
+
+data class HomeData(
+    val rows: List<HomeRow> = emptyList(),
+    val billboard: Billboard? = null,
+    /** Per-profile preference; the hero trailer honours it, on by default. */
+    val autoplayPreviews: Boolean = true,
+)
+
+data class Season(
+    val number: Int,
+    val name: String,
+    val episodes: Int,
+)
+
+data class Episode(
+    val number: Int,
+    val name: String,
+    val overview: String? = null,
+    val still: String? = null,
+)
+
+data class NextEpisodeInfo(
+    val mediaType: String,
+    val season: Int,
+    val title: String,
+    val episode: Int,
+    val tmdbId: Int = 0,
+)
+
+fun nextEpisodeAfter(episodes: List<Episode>, season: Int, episode: Int): NextEpisodeInfo? =
+    episodes.firstOrNull { it.number == episode + 1 }?.let {
+        NextEpisodeInfo("tv", season, it.name, it.number)
+    }
+
+enum class VideoQuality(val label: String, val width: Int, val height: Int) {
+    Auto("Auto", Int.MAX_VALUE, Int.MAX_VALUE),
+    P1080("1080p", 1920, 1080),
+    P720("720p", 1280, 720),
+    P480("480p", 854, 480),
+    DataSaver("Data Saver", 640, 360),
+}
+
+/**
+ * A cast member. The backend sends `{ id, name, character, profile }` — it is a
+ * person, not a title, so it must not be parsed as a MediaCard.
+ */
+data class Person(
+    val id: Int,
+    val name: String,
+    val character: String = "",
+    val profile: String? = null,
+)
+
+data class TitleDetail(
+    val mediaType: String,
+    val tmdbId: Int,
+    val title: String,
+    val overview: String,
+    val backdrop: String? = null,
+    val poster: String? = null,
+    val year: String? = null,
+    val rating: Double? = null,
+    val runtime: Int? = null,
+    val tagline: String? = null,
+    val inMyList: Boolean = false,
+    val myRating: String? = null,
+    val progress: Double = 0.0,
+    val seasons: List<Season> = emptyList(),
+    val cast: List<Person> = emptyList(),
+)
+
+data class StreamSource(
+    val name: String,
+    val quality: String,
+    val url: String,
+)
+
+data class SubtitleTrack(val label: String, val language: String, val url: String)
+
+data class LiveChannel(
+    val id: String,
+    val channelId: String,
+    val name: String,
+    val genre: String,
+    val country: String,
+)
+
+data class ActivityEntry(
+    val mediaType: String,
+    val tmdbId: Int,
+    val title: String,
+    val poster: String? = null,
+    val percent: Double = 0.0,
+    val season: Int? = null,
+    val episode: Int? = null,
+    val updatedAt: Long? = null,
+)
+
+fun JSONObject.toMediaCard(): MediaCard = MediaCard(
+    mediaType = optString("mediaType", "movie"),
+    tmdbId = optInt("tmdbId"),
+    title = optString("title", "Untitled"),
+    poster = optString("poster", null),
+    backdrop = optString("backdrop", null),
+    year = optString("year", null),
+    rating = if (has("rating") && !isNull("rating")) optDouble("rating") else null,
+    sub = optString("sub", null),
+    percent = optDouble("percent", 0.0),
+    ribbon = optString("ribbon", null),
+    season = if (has("season") && !isNull("season")) optInt("season") else null,
+    episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
+)
+
+fun JSONObject.toBillboard(): Billboard = Billboard(
+    mediaType = optString("mediaType", "movie"),
+    tmdbId = optInt("tmdbId"),
+    title = optString("title", "Untitled"),
+    overview = optString("overview", ""),
+    backdrop = optString("backdrop", null),
+    poster = optString("poster", null),
+    year = optString("year", null),
+    rating = if (has("rating") && !isNull("rating")) optDouble("rating") else null,
+    trailerKey = optString("trailerKey", null),
+)
+
+fun JSONObject.toPerson(): Person = Person(
+    id = optInt("id"),
+    name = optString("name", "Unknown"),
+    character = optString("character", ""),
+    profile = optString("profile", null),
+)
+
+fun JSONObject.toProfile(): Profile = Profile(
+    id = optString("id"),
+    name = optString("name", "Profile"),
+    avatar = optString("avatar", null),
+    kids = optBoolean("kids", false),
+)

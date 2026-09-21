@@ -1,0 +1,1655 @@
+package com.marco.streammore.tv
+
+import android.graphics.Matrix
+import android.net.Uri
+import android.os.Bundle
+import android.util.Log
+import android.view.TextureView
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+
+// ── Palette ──────────────────────────────────────────────────────────────────
+//
+// The scheme uses a cool purple accent and must be built with darkColorScheme(): copying the *light* scheme and
+// overriding only primary/background/surface leaves onBackground and onSurface
+// near-black, which renders every default-coloured Text invisible on the black
+// background.
+internal val Purple = Color(0xFF9B6DFF)
+internal val Bg = Color(0xFF0A0810)
+internal val Panel = Color(0xFF181321)
+internal val PanelFocused = Color(0xFF30204A)
+internal val Muted = Color(0xFFBDB4CC)
+internal val TextPrimary = Color(0xFFF7F3FF)
+internal val BorderIdle = Color(0xFF493A5F)
+internal val BorderFocused = Color(0xFFFFFFFF)
+internal val ErrorText = Color(0xFFFF8B90)
+internal val ErrorFill = Color(0xFF5B171B)
+internal val WarnYellow = Color(0xFFFFD54F)
+internal val MatchGreen = Color(0xFF46D369)
+internal val MetaText = Color(0xFFE5E5E5)
+internal val BadgeBorder = Color(0xFF777777)
+
+internal val StreammoreScheme = darkColorScheme(
+    primary = Purple,
+    onPrimary = Color.White,
+    background = Bg,
+    onBackground = TextPrimary,
+    surface = Panel,
+    onSurface = TextPrimary,
+    surfaceVariant = Panel,
+    onSurfaceVariant = Muted,
+    outline = BorderIdle,
+    error = ErrorText,
+    onError = Color.Black,
+)
+
+// ── Metrics ──────────────────────────────────────────────────────────────────
+//
+// A 1080p Android TV panel is 960x540dp at xhdpi. A 270dp-tall card is half the
+// viewport, so rows are sized to keep two full rows on screen.
+private val Gutter = 42.dp
+internal val PosterWidth = 104.dp
+internal val PosterHeight = 150.dp
+private val NavHeight = 54.dp
+
+internal sealed interface TvScreen {
+    data object Login : TvScreen
+    data object Profiles : TvScreen
+    data object Home : TvScreen
+    data class Browse(val mediaType: String) : TvScreen
+    data object Search : TvScreen
+    data object NewHot : TvScreen
+    data object MyList : TvScreen
+    data object Activity : TvScreen
+    data object Live : TvScreen
+    data class Detail(val mediaType: String, val tmdbId: Int) : TvScreen
+    data class Player(
+        val source: String,
+        val title: String,
+        val subtitles: List<SubtitleTrack> = emptyList(),
+        val nextEpisode: NextEpisodeInfo? = null,
+    ) : TvScreen
+}
+
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent { StreammoreTvApp() }
+    }
+}
+
+@Composable
+internal fun StreammoreTvApp() {
+    val context = LocalContext.current
+    val api = remember(context) { StreammoreApi(context.applicationContext) }
+    val scope = rememberCoroutineScope()
+    var screen by remember { mutableStateOf<TvScreen>(TvScreen.Login) }
+    var profiles by remember { mutableStateOf<List<Profile>>(emptyList()) }
+    var profileId by remember { mutableStateOf<String?>(null) }
+    var rows by remember { mutableStateOf<List<HomeRow>>(emptyList()) }
+    var billboard by remember { mutableStateOf<Billboard?>(null) }
+    var autoplayPreviews by remember { mutableStateOf(true) }
+    var cards by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
+    var detail by remember { mutableStateOf<TitleDetail?>(null) }
+    var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
+    var liveChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
+    var activity by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
+    var updateDismissed by remember { mutableStateOf(false) }
+    var updateBusy by remember { mutableStateOf(false) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    // The screen that opened the player. Back from playback returns there instead
+    // of always dumping the user back onto Home.
+    var playerReturn by remember { mutableStateOf<TvScreen?>(null) }
+
+    fun loadProfiles() = scope.launch {
+        loading = true
+        runCatching { api.profiles() }.onSuccess { profiles = it; screen = TvScreen.Profiles }
+            .onFailure { error = it.message ?: "Could not load profiles" }
+        loading = false
+    }
+    fun loadHome(id: String) = scope.launch {
+        profileId = id; loading = true
+        runCatching { api.home(id) }
+            .onSuccess { data ->
+                rows = data.rows
+                billboard = data.billboard
+                autoplayPreviews = data.autoplayPreviews
+                Log.d(
+                    "StreammoreHero",
+                    "billboard=${data.billboard?.title} type=${data.billboard?.mediaType} " +
+                        "trailerKey=${data.billboard?.trailerKey} autoplayPreviews=${data.autoplayPreviews}",
+                )
+                screen = TvScreen.Home
+            }
+            .onFailure { error = it.message ?: "Could not load Home" }
+        loading = false
+    }
+    fun loadCards(mediaType: String) = scope.launch {
+        val id = profileId ?: return@launch
+        loading = true
+        runCatching { api.browse(mediaType, id) }.onSuccess { cards = it; screen = TvScreen.Browse(mediaType) }
+            .onFailure { error = it.message ?: "Could not load catalogue" }
+        loading = false
+    }
+    fun openDetail(card: MediaCard) = scope.launch {
+        val id = profileId ?: return@launch
+        loading = true; detail = null; episodes = emptyList(); screen = TvScreen.Detail(card.mediaType, card.tmdbId)
+        runCatching { api.detail(card.mediaType, card.tmdbId, id) }
+            .onSuccess { loaded ->
+                detail = loaded
+                // The browser opens a show on its first season; without this the
+                // Episodes section renders empty until a season button is pressed.
+                val first = loaded.seasons.firstOrNull()
+                if (loaded.mediaType == "tv" && first != null) {
+                    runCatching { api.season(loaded.tmdbId, first.number, id) }.onSuccess { episodes = it }
+                }
+            }
+            .onFailure { error = it.message ?: "Could not load title" }
+        loading = false
+    }
+    fun play(
+        mediaType: String,
+        tmdbId: Int,
+        title: String,
+        season: Int? = null,
+        episode: Int? = null,
+        nextEpisode: NextEpisodeInfo? = null,
+    ) = scope.launch {
+        val id = profileId ?: return@launch
+        playerReturn = if (screen is TvScreen.Player) playerReturn else screen
+        loading = true
+        runCatching {
+            val source = api.streams(mediaType, tmdbId, id, season, episode).firstOrNull()
+                ?: error("No playable sources were found")
+            val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
+            TvScreen.Player(source.url, title, subs, nextEpisode?.copy(tmdbId = tmdbId))
+        }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
+        loading = false
+    }
+    fun loadLive() = scope.launch {
+        val id = profileId ?: return@launch
+        error = null; screen = TvScreen.Live; loading = true
+        runCatching { api.liveChannels(id) }.onSuccess { liveChannels = it }
+            .onFailure { error = it.message ?: "Could not load Live TV" }
+        loading = false
+    }
+    fun playLive(channel: LiveChannel) = scope.launch {
+        val id = profileId
+        playerReturn = screen
+        error = null; loading = true
+        runCatching { api.liveStreams(channel.channelId, id).firstOrNull() ?: error("This channel is temporarily unavailable") }
+            .onSuccess { screen = TvScreen.Player(it.url, channel.name) }
+            .onFailure { error = it.message ?: "This channel is temporarily unavailable" }
+        loading = false
+    }
+    fun loadMyList() = scope.launch {
+        profileId?.let { id -> loading = true; runCatching { api.myList(id) }.onSuccess { cards = it; screen = TvScreen.MyList }.onFailure { error = it.message }; loading = false }
+    }
+    fun loadNewHot() = scope.launch {
+        profileId?.let { id -> loading = true; runCatching { api.newHot(id) }.onSuccess { rows = it; screen = TvScreen.NewHot }.onFailure { error = it.message }; loading = false }
+    }
+    fun loadActivity() = scope.launch {
+        profileId?.let { id -> loading = true; runCatching { api.activity(id) }.onSuccess { activity = it; screen = TvScreen.Activity }.onFailure { error = it.message }; loading = false }
+    }
+    fun navigate(target: TvScreen) {
+        when (target) {
+            TvScreen.Home -> profileId?.let { loadHome(it) }
+            is TvScreen.Browse -> loadCards(target.mediaType)
+            TvScreen.MyList -> loadMyList()
+            TvScreen.NewHot -> loadNewHot()
+            TvScreen.Activity -> loadActivity()
+            TvScreen.Live -> loadLive()
+            TvScreen.Search, TvScreen.Profiles -> screen = target
+            else -> screen = target
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        runCatching { api.me() }.onSuccess { loadProfiles() }
+        runCatching { checkForAppUpdate() }
+            .onSuccess { availableUpdate = it }
+    }
+
+    MaterialTheme(colorScheme = StreammoreScheme) {
+        Surface(Modifier.fillMaxSize(), color = Bg) {
+            Box(Modifier.fillMaxSize()) {
+                when (val current = screen) {
+                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
+                    TvScreen.Profiles -> ProfileScreen(profiles, error, ::loadHome)
+                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                        HomeScreen(
+                            rows = rows,
+                            billboard = billboard,
+                            autoplayPreviews = autoplayPreviews,
+                            onCard = ::openDetail,
+                            onPlayBillboard = { hero ->
+                                // Movies play straight away; a series needs an episode
+                                // choice, so it opens its detail page (as the browser does).
+                                if (hero.mediaType == "movie") play("movie", hero.tmdbId, hero.title)
+                                else openDetail(hero.toCard())
+                            },
+                            loadTrailer = { hero ->
+                                runCatching { api.trailer(hero.mediaType, hero.tmdbId) }.getOrNull()
+                            },
+                        )
+                    }
+                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen(if (current.mediaType == "tv") "TV Shows" else "Movies", cards, ::openDetail) }
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
+                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail) }
+                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail) }
+                    TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
+                    is TvScreen.Detail -> {
+                        val active = detail
+                        if (active == null) LoadingScreen(error) else DetailScreen(
+                            active,
+                            episodes,
+                            error,
+                            { screen = TvScreen.Home },
+                            {
+                                if (active.mediaType == "tv") {
+                                    play(
+                                        "tv",
+                                        active.tmdbId,
+                                        active.title,
+                                        1,
+                                        1,
+                                        nextEpisodeAfter(episodes, 1, 1),
+                                    )
+                                } else {
+                                    play("movie", active.tmdbId, active.title)
+                                }
+                            },
+                            { season -> profileId?.let { id -> scope.launch { runCatching { api.season(active.tmdbId, season, id) }.onSuccess { episodes = it }.onFailure { error = it.message ?: "Could not load episodes" } } } },
+                            { season, episode -> play("tv", active.tmdbId, active.title, season, episode, nextEpisodeAfter(episodes, season, episode)) },
+                            { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
+                            { value -> profileId?.let { id -> scope.launch { detail = active.copy(myRating = api.rate(id, active.mediaType, active.tmdbId, value)) } } },
+                        )
+                    }
+                    is TvScreen.Player -> PlayerScreen(
+                        current.source,
+                        current.title,
+                        current.subtitles,
+                        api.sessionCookie(),
+                        current.nextEpisode,
+                        { next ->
+                            play(
+                                "tv",
+                                next.tmdbId,
+                                next.title,
+                                next.season,
+                                next.episode,
+                                nextEpisodeAfter(episodes, next.season, next.episode),
+                            )
+                        },
+                    ) {
+                        screen = playerReturn ?: TvScreen.Home
+                        playerReturn = null
+                    }
+                }
+                if (loading && screen !is TvScreen.Player) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Purple)
+                if (error != null && screen !is TvScreen.Login && screen !is TvScreen.Live && screen !is TvScreen.Detail && screen !is TvScreen.Player) {
+                    ErrorBanner(error!!, Modifier.align(Alignment.BottomCenter))
+                }
+                if (availableUpdate != null && !updateDismissed) {
+                    UpdatePrompt(
+                        update = availableUpdate!!,
+                        modifier = Modifier.align(Alignment.Center),
+                        busy = updateBusy,
+                        error = updateError,
+                        onLater = { updateDismissed = true },
+                        onUpdate = {
+                            if (!updateBusy) {
+                                scope.launch {
+                                    updateBusy = true
+                                    updateError = null
+                                    runCatching { downloadAndInstallUpdate(context, availableUpdate!!) }
+                                        .onFailure { updateError = it.message ?: "Could not start the update" }
+                                    updateBusy = false
+                                }
+                            }
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Shell ────────────────────────────────────────────────────────────────────
+
+@Composable
+internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: Profile?, content: @Composable () -> Unit) {
+    // Back from any section returns Home; only Back from Home leaves the app.
+    BackHandler(enabled = screen !is TvScreen.Home) { navigate(TvScreen.Home) }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(NavHeight)
+                .background(Bg)
+                .padding(horizontal = Gutter),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Image(
+                painter = painterResource(R.drawable.streammore_logo),
+                contentDescription = "Streammore",
+                modifier = Modifier.width(160.dp).height(54.dp),
+                contentScale = ContentScale.Fit,
+            )
+            Spacer(Modifier.width(20.dp))
+            TopButton("Home", screen is TvScreen.Home) { navigate(TvScreen.Home) }
+            TopButton("TV Shows", screen is TvScreen.Browse && screen.mediaType == "tv") { navigate(TvScreen.Browse("tv")) }
+            TopButton("Movies", screen is TvScreen.Browse && screen.mediaType == "movie") { navigate(TvScreen.Browse("movie")) }
+            TopButton("Search", screen is TvScreen.Search) { navigate(TvScreen.Search) }
+            TopButton("New & Hot", screen is TvScreen.NewHot) { navigate(TvScreen.NewHot) }
+            TopButton("Live TV", screen is TvScreen.Live) { navigate(TvScreen.Live) }
+            TopButton("My List", screen is TvScreen.MyList) { navigate(TvScreen.MyList) }
+            Spacer(Modifier.weight(1f))
+            Text(profile?.name ?: "Profile", color = Muted, fontSize = 14.sp)
+            Spacer(Modifier.width(8.dp))
+            TextButton({ navigate(TvScreen.Profiles) }) { Text("Switch", color = TextPrimary, fontSize = 14.sp) }
+        }
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF222222)))
+        Box(Modifier.fillMaxSize()) { content() }
+    }
+}
+
+@Composable
+internal fun TopButton(label: String, active: Boolean, onClick: () -> Unit) {
+    TextButton(onClick) {
+        Text(
+            label,
+            color = if (active) Color.White else Muted,
+            fontSize = 14.sp,
+            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+        )
+    }
+}
+
+// ── Building blocks ──────────────────────────────────────────────────────────
+
+/**
+ * A D-pad focusable tile. On a TV the focus ring *is* the pointer, so the focused
+ * tile must be unmistakable: brighter border, lighter fill and a slight scale-up.
+ */
+@Composable
+internal fun TvCard(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp),
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Center,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    TvCardSurface(
+        focused = focused,
+        onClick = onClick,
+        modifier = modifier.onFocusChanged { focused = it.isFocused || it.hasFocus },
+        shape = shape,
+        contentPadding = contentPadding,
+        horizontalAlignment = horizontalAlignment,
+        verticalArrangement = verticalArrangement,
+        content = content,
+    )
+}
+
+/**
+ * The pure visual layer of [TvCard]. The focused appearance is a function of the
+ * [focused] flag rather than of live focus ownership, so it can be rendered and
+ * inspected in isolation.
+ */
+@Composable
+internal fun TvCardSurface(
+    focused: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(8.dp),
+    contentPadding: PaddingValues = PaddingValues(0.dp),
+    horizontalAlignment: Alignment.Horizontal = Alignment.CenterHorizontally,
+    verticalArrangement: Arrangement.Vertical = Arrangement.Center,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
+    val border by animateColorAsState(if (focused) BorderFocused else BorderIdle, label = "focusBorder")
+
+    Card(
+        modifier = modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clickable(onClick = onClick),
+        shape = shape,
+        colors = CardDefaults.cardColors(containerColor = if (focused) PanelFocused else Panel),
+        border = BorderStroke(if (focused) 2.dp else 1.dp, border),
+    ) {
+        Column(
+            Modifier.padding(contentPadding).fillMaxWidth(),
+            horizontalAlignment = horizontalAlignment,
+            verticalArrangement = verticalArrangement,
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun Ribbon(label: String) {
+    Text(
+        label,
+        color = Color.White,
+        fontSize = 9.sp,
+        fontWeight = FontWeight.Bold,
+        maxLines = 1,
+        modifier = Modifier
+            .background(Purple)
+            .padding(horizontal = 6.dp, vertical = 3.dp),
+    )
+}
+
+@Composable
+private fun WatchProgress(percent: Double) {
+    Box(Modifier.fillMaxWidth().height(3.dp).background(Color(0xFF3A3A3A))) {
+        Box(Modifier.fillMaxWidth(percent.coerceIn(0.0, 1.0).toFloat()).height(3.dp).background(Purple))
+    }
+}
+
+/** Poster tile: artwork inside the focus ring, caption underneath it. */
+@Composable
+internal fun MediaCardView(card: MediaCard, onClick: (MediaCard) -> Unit, modifier: Modifier = Modifier) {
+    Column(Modifier.width(PosterWidth)) {
+        TvCard({ onClick(card) }, modifier.fillMaxWidth()) {
+            Box {
+                AsyncImage(
+                    model = card.poster ?: card.backdrop,
+                    contentDescription = card.title,
+                    modifier = Modifier.fillMaxWidth().height(PosterHeight),
+                    contentScale = ContentScale.Crop,
+                )
+                card.ribbon?.let { Box(Modifier.align(Alignment.TopStart)) { Ribbon(it) } }
+                if (card.percent > 0.0) Box(Modifier.align(Alignment.BottomCenter)) { WatchProgress(card.percent) }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            card.title,
+            color = TextPrimary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · "),
+            color = Muted,
+            fontSize = 11.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * Screens that load asynchronously lose focus when their content appears, so the
+ * first D-pad press lands on the nav bar and pressing OK appears to do nothing.
+ * Give each such screen a focus target and claim it once, when content arrives.
+ */
+@Composable
+private fun FocusFirstWhenReady(ready: Boolean, requester: FocusRequester) {
+    var claimed by remember { mutableStateOf(false) }
+    LaunchedEffect(ready) {
+        if (ready && !claimed) {
+            claimed = true
+            // Wait for a real layout pass. Requesting focus while the tree is still
+            // being measured makes the scrollable parent scroll to a stale position,
+            // which pushes the hero's title off the top of the screen.
+            // The hero and its rows first appear in this very frame; claiming focus
+            // before they have been laid out makes the scroller jump to a stale
+            // position and clips the hero's title off the top of the screen.
+            withFrameNanos { }
+            delay(900)
+            runCatching { requester.requestFocus() }
+        }
+    }
+}
+
+/**
+ * A focus-aware pill button.
+ *
+ * Material3's Button draws no focus indicator, which on a TV means the remote gives
+ * no feedback at all. The focused button therefore gets a bright ring and a small
+ * scale-up, matching the poster tiles.
+ */
+@Composable
+internal fun TvButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    selected: Boolean = false,
+    onFocusGained: (() -> Unit)? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "buttonFocusScale")
+    val ring by animateColorAsState(if (focused) BorderFocused else BorderIdle, label = "buttonFocusRing")
+    val focusModifier = modifier
+        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .onFocusChanged {
+            val nowFocused = it.isFocused || it.hasFocus
+            if (nowFocused && !focused) onFocusGained?.invoke()
+            focused = nowFocused
+        }
+
+    if (primary) {
+        Button(
+            onClick = onClick,
+            modifier = focusModifier,
+            border = BorderStroke(if (focused) 2.dp else 0.dp, ring),
+            content = content,
+        )
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = focusModifier,
+            border = BorderStroke(
+                if (focused) 2.dp else 1.dp,
+                when {
+                    focused -> ring
+                    selected -> Color.White
+                    else -> BorderIdle
+                },
+            ),
+            content = content,
+        )
+    }
+}
+
+// ── Screens ──────────────────────────────────────────────────────────────────
+
+@Composable
+internal fun LoginScreen(loading: Boolean, error: String?, onLogin: (String, String) -> Unit) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    val fieldWidth = 420.dp
+    Column(Modifier.fillMaxSize().padding(64.dp), Arrangement.Center, Alignment.CenterHorizontally) {
+        Image(
+            painter = painterResource(R.drawable.streammore_logo),
+            contentDescription = "Streammore",
+            modifier = Modifier.width(360.dp).height(120.dp),
+            contentScale = ContentScale.Fit,
+        )
+        Spacer(Modifier.height(28.dp))
+        OutlinedTextField(
+            email, { email = it },
+            label = { Text("Email") },
+            singleLine = true,
+            modifier = Modifier.width(fieldWidth),
+        )
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            password, { password = it },
+            label = { Text("Password") },
+            singleLine = true,
+            visualTransformation = PasswordVisualTransformation(),
+            modifier = Modifier.width(fieldWidth),
+        )
+        Spacer(Modifier.height(20.dp))
+        Button(
+            { onLogin(email.trim(), password) },
+            enabled = !loading && email.isNotBlank() && password.isNotBlank(),
+            modifier = Modifier.width(fieldWidth),
+        ) {
+            Text("Sign in", fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+        error?.let {
+            Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 18.dp).width(fieldWidth))
+        }
+    }
+}
+
+@Composable
+internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxSize().padding(56.dp)) {
+        Text("Who's watching?", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+        Spacer(Modifier.height(24.dp))
+        if (profiles.isEmpty()) {
+            Text("No profiles are available for this account.", color = Muted)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            profiles.forEach { profile ->
+                TvCard({ onSelect(profile.id) }, Modifier.width(180.dp).height(170.dp)) {
+                    Text(profile.avatar ?: profile.name.take(1).uppercase(), fontSize = 42.sp)
+                    Spacer(Modifier.height(6.dp))
+                    Text(profile.name, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (profile.kids) Text("KIDS", color = WarnYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 20.dp)) }
+    }
+}
+
+private val HeroHeight = 350.dp
+
+/**
+ * The home hero, mirroring the browser's billboard: full-bleed backdrop, title,
+ * a match/year/HD/type line, a three-line overview and Play / More Info.
+ *
+ * After a beat the backdrop becomes a muted, looping trailer — the same embed and
+ * the same 2600ms delay the browser uses.
+ */
+@Composable
+internal fun BillboardHero(
+    billboard: Billboard,
+    autoplayPreviews: Boolean,
+    playFocus: FocusRequester? = null,
+    trailerEnabled: Boolean = true,
+    onHeroFocus: (() -> Unit)? = null,
+    onPlay: (Billboard) -> Unit,
+    onMoreInfo: (Billboard) -> Unit,
+    loadTrailer: suspend (Billboard) -> String? = { null },
+) {
+    var trailerUrl by remember(billboard.tmdbId) { mutableStateOf<String?>(null) }
+    LaunchedEffect(billboard.tmdbId, autoplayPreviews, trailerEnabled) {
+        // Leaving the hero tears the player down; the browser does the same on scroll.
+        trailerUrl = null
+        if (trailerEnabled && autoplayPreviews && !billboard.trailerKey.isNullOrBlank()) {
+            delay(2600)
+            trailerUrl = loadTrailer(billboard)
+        }
+    }
+
+    Box(Modifier.fillMaxWidth().height(HeroHeight)) {
+        AsyncImage(
+            model = billboard.backdrop ?: billboard.poster,
+            contentDescription = null,
+            modifier = Modifier.matchParentSize(),
+            contentScale = ContentScale.Crop,
+        )
+        trailerUrl?.let { url -> HeroTrailer(url, Modifier.matchParentSize()) }
+        // The browser's two scrims: dark on the left for legible text, and a fade
+        // into the page background at the bottom so the rows below blend in.
+        Box(
+            Modifier.matchParentSize().background(
+                Brush.horizontalGradient(
+                    0.0f to Bg.copy(alpha = 0.92f),
+                    0.45f to Bg.copy(alpha = 0.55f),
+                    0.75f to Color.Transparent,
+                ),
+            ),
+        )
+        Box(
+            Modifier.matchParentSize().background(
+                // Browser-equivalent bottom fade: keep the trailer visible through
+                // almost the whole hero and fade only the final 18% into the rows.
+                Brush.verticalGradient(0.82f to Color.Transparent, 1.0f to Bg),
+            ),
+        )
+
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(start = Gutter, end = Gutter, bottom = 28.dp)
+                .widthIn(max = 640.dp),
+        ) {
+            Text(
+                billboard.title,
+                color = Color.White,
+                fontSize = 52.sp,
+                lineHeight = 54.sp,
+                fontWeight = FontWeight.ExtraBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(10.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                billboard.rating?.let {
+                    Text("${(it * 10).toInt()}% Match", color = MatchGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
+                billboard.year?.let { Text(it, color = MetaText, fontSize = 15.sp) }
+                Text(
+                    "HD",
+                    color = MetaText,
+                    fontSize = 11.sp,
+                    modifier = Modifier.border(1.dp, BadgeBorder, RoundedCornerShape(2.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+                )
+                Text(if (billboard.mediaType == "tv") "Series" else "Film", color = MetaText, fontSize = 15.sp)
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                billboard.overview,
+                color = MetaText,
+                fontSize = 15.sp,
+                lineHeight = 22.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TvButton(
+                    onClick = { onPlay(billboard) },
+                    modifier = if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier,
+                    primary = true,
+                    onFocusGained = onHeroFocus,
+                ) {
+                    Text("▶ Play", fontSize = 16.sp)
+                }
+                TvButton(onClick = { onMoreInfo(billboard) }, onFocusGained = onHeroFocus) {
+                    Text("ℹ More Info", color = TextPrimary, fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The hero trailer: a muted, looping native player, scaled 1.35x to crop the
+ * letterboxing exactly as the browser's embed does.
+ *
+ * Deliberately never focusable — on a TV the D-pad has to pass straight through to
+ * Play / More Info rather than getting trapped in the player.
+ */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+private fun HeroTrailer(url: String, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember(url) {
+        ExoPlayer.Builder(context).build().apply {
+            setMediaItem(MediaItem.fromUri(Uri.parse(url)))
+            volume = 0f
+            repeatMode = Player.REPEAT_MODE_ONE
+            playWhenReady = true
+            prepare()
+        }
+    }
+    DisposableEffect(url) {
+        onDispose {
+            Log.d("StreammoreHero", "trailer player released")
+            player.release()
+        }
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { ctx ->
+            HeroTextureSurface(ctx).also { surface ->
+                surface.bind(player)
+            }
+        },
+        onRelease = { surface ->
+            surface.unbind(player)
+        },
+    )
+}
+
+/**
+ * Full-bleed hero surface for Xiaomi Android TV.
+ *
+ * PlayerView/SurfaceView kept laying out the decoded frame at its own aspect ratio,
+ * leaving a visible lower rectangle in the billboard. TextureView lets us own the
+ * transform: preserve the video aspect ratio, center-crop it, and cover every pixel
+ * of the hero box.
+ */
+private class HeroTextureSurface(context: android.content.Context) : FrameLayout(context) {
+    private val texture = TextureView(context)
+    private var videoWidth = 0
+    private var videoHeight = 0
+    private var pixelRatio = 1f
+
+    init {
+        setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        addView(
+            texture,
+            LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT),
+        )
+        texture.isFocusable = false
+        texture.isFocusableInTouchMode = false
+        texture.isClickable = false
+        texture.setOnTouchListener { _, _ -> true }
+    }
+
+    fun bind(player: ExoPlayer) {
+        player.setVideoTextureView(texture)
+        player.addListener(listener)
+        applyCrop()
+    }
+
+    fun unbind(player: ExoPlayer) {
+        player.removeListener(listener)
+        player.clearVideoTextureView(texture)
+    }
+
+    private val listener = object : Player.Listener {
+        override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+            videoWidth = videoSize.width
+            videoHeight = videoSize.height
+            pixelRatio = videoSize.pixelWidthHeightRatio
+            applyCrop()
+        }
+    }
+
+    override fun onSizeChanged(width: Int, height: Int, oldWidth: Int, oldHeight: Int) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight)
+        applyCrop()
+    }
+
+    private fun applyCrop() {
+        if (width <= 0 || height <= 0 || videoWidth <= 0 || videoHeight <= 0) return
+        val videoAspect = videoWidth * pixelRatio / videoHeight.toFloat()
+        val viewAspect = width / height.toFloat()
+        val scaleX: Float
+        val scaleY: Float
+        if (videoAspect > viewAspect) {
+            // Video is wider: crop its sides.
+            scaleX = videoAspect / viewAspect
+            scaleY = 1f
+        } else {
+            // Video is taller: crop its top/bottom.
+            scaleX = 1f
+            scaleY = viewAspect / videoAspect
+        }
+        texture.setTransform(Matrix().apply {
+            setScale(scaleX, scaleY, width / 2f, height / 2f)
+        })
+    }
+}
+
+
+@Composable
+internal fun HomeScreen(
+    rows: List<HomeRow>,
+    billboard: Billboard? = null,
+    autoplayPreviews: Boolean = true,
+    onCard: (MediaCard) -> Unit,
+    onPlayBillboard: (Billboard) -> Unit = {},
+    loadTrailer: suspend (Billboard) -> String? = { null },
+) {
+    // Deliberately no auto-focus on this screen. Compose scrolls a scrollable parent
+    // to the focused node, and claiming focus while the hero is still settling makes
+    // the list jump 250-500px, which clips the hero's title off the top of the
+    // screen. The first D-pad press lands on the nav bar instead, and the hero is one
+    // press away from there.
+    //
+    // A plain scrolling Column rather than a LazyColumn for the same reason, and
+    // because the rows are lazy horizontally anyway - which is where the item count
+    // actually is.
+    val scrollState = rememberScrollState()
+    val homeScope = rememberCoroutineScope()
+    val heroPlayFocus = remember { FocusRequester() }
+    val heroOnScreen by remember { derivedStateOf { scrollState.value < 80 } }
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(scrollState),
+    ) {
+        billboard?.let { hero ->
+            BillboardHero(
+                billboard = hero,
+                autoplayPreviews = autoplayPreviews,
+                playFocus = heroPlayFocus,
+                trailerEnabled = heroOnScreen,
+                onHeroFocus = {
+                    homeScope.launch {
+                        // Compose may run bring-into-view after focus changes;
+                        // reset after that pass so the complete hero is visible.
+                        delay(220)
+                        scrollState.animateScrollTo(0)
+                    }
+                },
+                onPlay = onPlayBillboard,
+                onMoreInfo = { onCard(it.toCard()) },
+                loadTrailer = loadTrailer,
+            )
+        }
+        rows.forEachIndexed { index, row ->
+            RowSection(
+                title = row.title,
+                items = row.items,
+                onCard = onCard,
+                firstCardRequester = if (index == 0) heroPlayFocus else null,
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+internal fun RowSection(
+    title: String,
+    items: List<MediaCard>,
+    onCard: (MediaCard) -> Unit,
+    firstCardRequester: FocusRequester? = null,
+) {
+    Column(Modifier.padding(horizontal = Gutter)) {
+        Text(title, color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            itemsIndexed(items) { index, item ->
+                val modifier = if (firstCardRequester != null) {
+                    Modifier
+                        .focusProperties { up = firstCardRequester }
+                        .onPreviewKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                firstCardRequester.requestFocus()
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                } else {
+                    Modifier
+                }
+                MediaCardView(item, onCard, modifier)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun GridScreen(title: String, cards: List<MediaCard>, onCard: (MediaCard) -> Unit) {
+    val firstCard = remember { FocusRequester() }
+    FocusFirstWhenReady(cards.isNotEmpty(), firstCard)
+    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
+        Text(title, color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        if (cards.isEmpty()) {
+            Text("Nothing here yet.", color = Muted, modifier = Modifier.padding(top = 18.dp))
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = PosterWidth),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            itemsIndexed(cards) { index, card ->
+                MediaCardView(card, onCard, if (index == 0) Modifier.focusRequester(firstCard) else Modifier)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun SearchScreen(cards: List<MediaCard>, onCard: (MediaCard) -> Unit, onSearch: (String) -> Unit) {
+    var query by remember { mutableStateOf("") }
+    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                query, { query = it },
+                label = { Text("Search titles") },
+                singleLine = true,
+                modifier = Modifier.width(420.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Button({ onSearch(query) }, enabled = query.isNotBlank()) { Text("Search") }
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = PosterWidth),
+            contentPadding = PaddingValues(vertical = 18.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(cards) { MediaCardView(it, onCard) }
+        }
+    }
+}
+
+@Composable
+internal fun NewHotScreen(rows: List<HomeRow>, onCard: (MediaCard) -> Unit) {
+    val firstCard = remember { FocusRequester() }
+    FocusFirstWhenReady(rows.any { it.items.isNotEmpty() }, firstCard)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        rows.forEach { row -> RowSection(row.title, row.items, onCard, null) }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+internal fun ActivityScreen(items: List<ActivityEntry>) {
+    LazyColumn(
+        contentPadding = PaddingValues(horizontal = Gutter, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item { Text("Viewing activity", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
+        if (items.isEmpty()) {
+            item { Text("No viewing activity yet.", color = Muted, modifier = Modifier.padding(top = 12.dp)) }
+        }
+        items(items) { entry ->
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Panel).padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AsyncImage(
+                    entry.poster, entry.title,
+                    Modifier.width(52.dp).height(74.dp).clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Crop,
+                )
+                Column(Modifier.padding(start = 16.dp)) {
+                    Text(entry.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        buildString {
+                            append("${(entry.percent * 100).toInt()}% watched")
+                            if (entry.season != null && entry.episode != null) append(" · S${entry.season} E${entry.episode}")
+                        },
+                        color = Muted, fontSize = 13.sp,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun LiveScreen(channels: List<LiveChannel>, error: String?, onPlay: (LiveChannel) -> Unit, onRefresh: () -> Unit) {
+    val firstChannel = remember { FocusRequester() }
+    FocusFirstWhenReady(channels.isNotEmpty(), firstChannel)
+    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
+            Text("Live TV", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(20.dp))
+            TvButton(onRefresh) { Text("Refresh", color = TextPrimary) }
+        }
+        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp)) }
+        if (channels.isEmpty() && error == null) {
+            Text("No Live TV channels were returned by the backend.", color = Muted, modifier = Modifier.padding(top = 20.dp))
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = 168.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            itemsIndexed(channels) { index, channel ->
+                val tileModifier = if (index == 0) Modifier.height(116.dp).focusRequester(firstChannel) else Modifier.height(116.dp)
+                TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
+                    Text("📺", fontSize = 26.sp)
+                    Spacer(Modifier.height(4.dp))
+                    Text(channel.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DetailScreen(
+    detail: TitleDetail,
+    episodes: List<Episode>,
+    error: String?,
+    onBack: () -> Unit,
+    onPlay: () -> Unit,
+    onSeason: (Int) -> Unit,
+    onEpisode: (Int, Int) -> Unit,
+    onList: () -> Unit,
+    onRate: (String?) -> Unit,
+) {
+    var selectedSeason by remember(detail.tmdbId) { mutableStateOf(detail.seasons.firstOrNull()?.number ?: 1) }
+    // Opening a title otherwise leaves nothing focused, so the first D-pad press
+    // lands on "Back" and pressing OK appears to do nothing. Start on Play.
+    val playFocus = remember(detail.tmdbId) { FocusRequester() }
+    LaunchedEffect(detail.tmdbId) { runCatching { playFocus.requestFocus() } }
+    BackHandler(onBack = onBack)
+
+    Box(Modifier.fillMaxSize()) {
+        // Backdrop hero behind the metadata, faded into the page background.
+        AsyncImage(
+            model = detail.backdrop ?: detail.poster,
+            contentDescription = null,
+            modifier = Modifier.fillMaxWidth().height(430.dp),
+            contentScale = ContentScale.Crop,
+        )
+        Box(
+            Modifier.fillMaxWidth().height(430.dp).background(
+                Brush.verticalGradient(
+                    0.0f to Bg.copy(alpha = 0.35f),
+                    0.6f to Bg.copy(alpha = 0.85f),
+                    1.0f to Bg,
+                ),
+            ),
+        )
+
+        LazyColumn(
+            contentPadding = PaddingValues(horizontal = 60.dp, vertical = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            item {
+                Column {
+                    TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
+                        Text("‹ Back", color = TextPrimary, fontSize = 15.sp)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(detail.title, color = TextPrimary, fontSize = 40.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    detail.tagline?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = Muted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        listOfNotNull(
+                            detail.year,
+                            detail.runtime?.let { "${it}m" },
+                            detail.rating?.let { "${(it * 10).toInt()}% Match" },
+                        ).joinToString(" · "),
+                        color = Muted, fontSize = 14.sp,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(detail.overview, color = TextPrimary.copy(alpha = 0.85f), fontSize = 15.sp, modifier = Modifier.width(820.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(16.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        TvButton(onPlay, Modifier.focusRequester(playFocus), primary = true) { Text("▶ Play", fontSize = 15.sp) }
+                        TvButton(onList) {
+                            Text(if (detail.inMyList) "✓ My List" else "+ My List", color = TextPrimary, fontSize = 15.sp)
+                        }
+                        TvButton({ onRate(if (detail.myRating == "up") null else "up") }) { Text("👍") }
+                        TvButton({ onRate(if (detail.myRating == "down") null else "down") }) { Text("👎") }
+                    }
+                    error?.let {
+                        Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
+                    }
+                }
+            }
+
+            if (detail.mediaType == "tv" && detail.seasons.isNotEmpty()) {
+                item {
+                    Column {
+                        Text("Episodes", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(detail.seasons) { season ->
+                                val isSelected = season.number == selectedSeason
+                                TvButton(
+                                    onClick = {
+                                        selectedSeason = season.number
+                                        onSeason(season.number)
+                                    },
+                                    selected = isSelected,
+                                ) {
+                                    Text(
+                                        "Season ${season.number}",
+                                        color = if (isSelected) Color.White else Muted,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                items(episodes) { episode ->
+                    EpisodeRow(episode) { onEpisode(selectedSeason, episode.number) }
+                }
+            }
+
+            if (detail.cast.isNotEmpty()) {
+                item {
+                    Column {
+                        Text("Cast", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            items(detail.cast) { person -> CastCard(person) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun EpisodeRow(episode: Episode, onClick: () -> Unit) {
+    TvCard(
+        onClick,
+        Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            AsyncImage(
+                episode.still, episode.name,
+                Modifier.width(112.dp).height(63.dp).clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop,
+            )
+            Column(Modifier.padding(start = 16.dp).weight(1f)) {
+                Text(
+                    "${episode.number}. ${episode.name}",
+                    color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                episode.overview?.takeIf { it.isNotBlank() }?.let {
+                    Spacer(Modifier.height(4.dp))
+                    Text(it, color = Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CastCard(person: Person) {
+    Column(Modifier.width(108.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        AsyncImage(
+            person.profile, person.name,
+            Modifier.size(88.dp).clip(CircleShape).background(Panel),
+            contentScale = ContentScale.Crop,
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(person.name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (person.character.isNotBlank()) {
+            Text(person.character, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun UpdatePrompt(
+    update: AppUpdate,
+    modifier: Modifier = Modifier,
+    busy: Boolean,
+    error: String?,
+    onLater: () -> Unit,
+    onUpdate: () -> Unit,
+) {
+    Surface(
+        modifier = modifier
+            .padding(28.dp)
+            .widthIn(max = 520.dp),
+        color = Panel,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(2.dp, Purple),
+        shadowElevation = 18.dp,
+    ) {
+        Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("STREAMMORE UPDATE", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+            Text("Version ${update.versionName} is available", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+            if (update.releaseNotes.isNotBlank()) {
+                Text(update.releaseNotes.take(500), color = Muted, fontSize = 14.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+            }
+            if (error != null) Text(error, color = ErrorText, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (busy) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    CircularProgressIndicator(Modifier.size(22.dp), color = Purple, strokeWidth = 2.dp)
+                    Text("Downloading update…", color = Muted, fontSize = 14.sp)
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TvButton(onClick = onUpdate, primary = true) { Text("Update now", fontSize = 14.sp) }
+                    TvButton(onClick = onLater) { Text("Later", color = TextPrimary, fontSize = 14.sp) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ErrorBanner(message: String, modifier: Modifier = Modifier) {
+    Surface(modifier.padding(28.dp), color = ErrorFill, shape = RoundedCornerShape(8.dp)) {
+        Text(
+            message,
+            color = Color.White,
+            fontSize = 14.sp,
+            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+internal fun LoadingScreen(error: String?) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        if (error == null) CircularProgressIndicator(color = Purple)
+        else Text(error, color = ErrorText, fontSize = 15.sp)
+    }
+}
+
+// Media3's DefaultHttpDataSource/DefaultMediaSourceFactory are marked @UnstableApi.
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+internal fun PlayerScreen(
+    source: String,
+    title: String,
+    subtitles: List<SubtitleTrack>,
+    cookie: String?,
+    nextEpisode: NextEpisodeInfo? = null,
+    onPlayNext: (NextEpisodeInfo) -> Unit = {},
+    onBack: () -> Unit,
+) {
+    val context = LocalContext.current
+    var playerError by remember(source) { mutableStateOf<String?>(null) }
+    var chromeVisible by remember(source) { mutableStateOf(false) }
+    var interactionTick by remember(source) { mutableStateOf(0) }
+    var qualityMenuOpen by remember(source) { mutableStateOf(false) }
+    var selectedQuality by remember(source) { mutableStateOf(VideoQuality.Auto) }
+    var nextPromptVisible by remember(source, nextEpisode) { mutableStateOf(false) }
+    var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
+    var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
+    var nextStarted by remember(source, nextEpisode) { mutableStateOf(false) }
+    val qualityFocus = remember(source) { FocusRequester() }
+    val nextFocus = remember(source, nextEpisode) { FocusRequester() }
+    val trackSelector = remember(source) { DefaultTrackSelector(context) }
+    val player = remember(source, trackSelector) {
+        // Subtitle files come from the authenticated /api/subtitles/file route, so
+        // ExoPlayer's own requests have to carry the session cookie.
+        val headers = if (cookie.isNullOrBlank()) emptyMap() else mapOf("Cookie" to cookie)
+        val dataSourceFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
+        ExoPlayer.Builder(context)
+            .setTrackSelector(trackSelector)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .build()
+            .apply {
+                addListener(object : Player.Listener {
+                    override fun onPlayerError(error: PlaybackException) {
+                        playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
+                        Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
+                    }
+                })
+                val tracks = subtitles.map { item ->
+                    MediaItem.SubtitleConfiguration.Builder(Uri.parse(item.url))
+                        .setMimeType(MimeTypes.TEXT_VTT)
+                        .setLanguage(item.language)
+                        .setLabel(item.label)
+                        .setSelectionFlags(C.SELECTION_FLAG_AUTOSELECT)
+                        .build()
+                }
+                setMediaItem(MediaItem.Builder().setUri(Uri.parse(source)).setSubtitleConfigurations(tracks).build())
+                prepare()
+                playWhenReady = true
+            }
+    }
+
+    fun applyQuality(quality: VideoQuality) {
+        val parameters = trackSelector.buildUponParameters()
+        when (quality) {
+            VideoQuality.Auto -> parameters
+                .clearVideoSizeConstraints()
+                .setForceLowestBitrate(false)
+                .setForceHighestSupportedBitrate(false)
+            VideoQuality.DataSaver -> parameters
+                .setMaxVideoSize(quality.width, quality.height)
+                .setForceLowestBitrate(true)
+                .setForceHighestSupportedBitrate(false)
+            else -> parameters
+                .setMaxVideoSize(quality.width, quality.height)
+                .setForceLowestBitrate(false)
+                .setForceHighestSupportedBitrate(false)
+        }
+        trackSelector.parameters = parameters.build()
+        selectedQuality = quality
+        qualityMenuOpen = false
+    }
+
+    LaunchedEffect(player, nextEpisode, nextPromptDismissed) {
+        if (nextEpisode == null || nextPromptDismissed) return@LaunchedEffect
+        while (true) {
+            val duration = player.duration
+            val position = player.currentPosition
+            if (duration > 0 && duration - position <= 30_000) {
+                val remaining = (duration - position).coerceAtLeast(0)
+                countdownSeconds = ((remaining + 999) / 1_000).toInt()
+                nextPromptVisible = true
+                if (remaining <= 0 && !nextStarted) {
+                    nextStarted = true
+                    onPlayNext(nextEpisode)
+                    break
+                }
+            }
+            delay(500)
+        }
+    }
+
+    LaunchedEffect(source) {
+        delay(700)
+        if (chromeVisible) qualityFocus.requestFocus()
+    }
+
+    LaunchedEffect(chromeVisible) {
+        if (chromeVisible) {
+            delay(80)
+            qualityFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen) {
+        if (chromeVisible && !qualityMenuOpen) {
+            delay(5_000)
+            chromeVisible = false
+        }
+    }
+
+    LaunchedEffect(nextPromptVisible) {
+        if (nextPromptVisible && !nextPromptDismissed) {
+            delay(80)
+            nextFocus.requestFocus()
+        }
+    }
+
+    DisposableEffect(player, nextEpisode) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && nextEpisode != null && !nextPromptDismissed && !nextStarted) {
+                    nextStarted = true
+                    onPlayNext(nextEpisode)
+                }
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    BackHandler(onBack = onBack)
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key in setOf(
+                        Key.DirectionUp,
+                        Key.DirectionDown,
+                        Key.DirectionLeft,
+                        Key.DirectionRight,
+                        Key.DirectionCenter,
+                        Key.Enter,
+                    )) {
+                    chromeVisible = true
+                    interactionTick++
+                }
+                false
+            },
+    ) {
+        AndroidView(
+            { PlayerView(it).apply {
+                this.player = player
+                useController = true
+                controllerShowTimeoutMs = 5_000
+                controllerHideOnTouch = true
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            } },
+            Modifier.fillMaxSize(),
+        )
+        if (chromeVisible) {
+            Box(
+                Modifier.fillMaxWidth().height(170.dp).background(
+                    Brush.verticalGradient(
+                        0.0f to Color.Black.copy(alpha = 0.86f),
+                        0.72f to Color.Black.copy(alpha = 0.28f),
+                        1.0f to Color.Transparent,
+                    ),
+                ),
+            )
+            Column(Modifier.padding(start = 34.dp, top = 26.dp).fillMaxWidth(0.82f)) {
+                Text("NOW PLAYING", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                Spacer(Modifier.height(5.dp))
+                Text(title, color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+
+            TvButton(
+                onClick = { qualityMenuOpen = !qualityMenuOpen },
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 24.dp, end = 30.dp)
+                    .focusRequester(qualityFocus),
+            ) {
+                Text("⚙  ${selectedQuality.label}", color = TextPrimary, fontSize = 14.sp)
+            }
+            if (qualityMenuOpen) {
+                Surface(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(top = 82.dp, end = 30.dp).widthIn(min = 180.dp),
+                    color = Panel.copy(alpha = 0.98f),
+                    shape = RoundedCornerShape(10.dp),
+                    border = BorderStroke(1.dp, BorderIdle),
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("VIDEO QUALITY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        VideoQuality.entries.forEach { quality ->
+                            TvButton(
+                                onClick = { applyQuality(quality) },
+                                selected = quality == selectedQuality,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(quality.label, color = TextPrimary, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (nextPromptVisible && nextEpisode != null && !nextPromptDismissed) {
+            Surface(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 34.dp, bottom = 42.dp).widthIn(max = 360.dp),
+                color = Color(0xF21A1425),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, BorderIdle),
+            ) {
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("UP NEXT", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                    Text("${nextEpisode.season}x${nextEpisode.episode}  ${nextEpisode.title}", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("Playing next in ${countdownSeconds.coerceAtLeast(0)}…", color = Muted, fontSize = 14.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        TvButton(
+                            onClick = {
+                                if (!nextStarted) {
+                                    nextStarted = true
+                                    onPlayNext(nextEpisode)
+                                }
+                            },
+                            primary = true,
+                            modifier = Modifier.focusRequester(nextFocus),
+                        ) {
+                            Text("▶ Play next", fontSize = 14.sp)
+                        }
+                        TvButton(onClick = {
+                            nextPromptDismissed = true
+                            nextPromptVisible = false
+                        }) {
+                            Text("Close", color = TextPrimary, fontSize = 14.sp)
+                        }
+                    }
+                }
+            }
+        }
+        playerError?.let { ErrorBanner(it, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+internal fun listOfNotNull(vararg values: Any?): List<String> = values.filterNotNull().map { it.toString() }

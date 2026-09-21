@@ -1,0 +1,22 @@
+# Android/Gradle
+.gradle/
+build/
+app/build/
+local.properties
+
+# Release signing material and distributable binaries
+*.keystore
+*.jks
+*.apk
+*.aab
+
+# Local test captures and raw diagnostics
+tv-test/
+*-contact-sheet.png
+streammore-ui-audit.png
+*.raw
+
+# IDE/OS files
+.idea/
+*.iml
+.DS_Store
