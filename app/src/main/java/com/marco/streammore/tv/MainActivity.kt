@@ -473,6 +473,58 @@ internal fun StreammoreTvApp() {
             .onFailure { error = it.message ?: "Could not remove viewing progress" }
     }
 
+    fun updatePlaybackUi(current: TvScreen.Player, position: Long, duration: Long) {
+        if (duration <= 0L || current.mediaType == null || current.tmdbId == null) return
+        val percent = (position.toDouble() / duration.toDouble()).coerceIn(0.0, 1.0)
+        if (current.mediaType == "tv" && current.season != null && current.episode != null) {
+            episodes = episodes.map { item ->
+                if (item.number == current.episode) item.copy(
+                    progress = percent,
+                    watched = percent >= 0.95,
+                    positionMs = position,
+                ) else item
+            }
+            detail?.takeIf { it.tmdbId == current.tmdbId }?.let { loaded ->
+                detail = loaded.copy(
+                    progress = percent,
+                    resumePositionMs = position.takeIf { percent > 0.02 && percent < 0.95 },
+                    resumeSeason = current.season,
+                    resumeEpisode = current.episode,
+                )
+            }
+        }
+        val baseCard = MediaCard(
+            mediaType = current.mediaType,
+            tmdbId = current.tmdbId,
+            title = current.title,
+            poster = current.poster,
+            backdrop = current.backdrop,
+            year = current.year,
+            percent = percent,
+            season = current.season,
+            episode = current.episode,
+        )
+        val card = if (percent >= 0.95 && current.nextEpisode != null) {
+            baseCard.copy(
+                percent = 0.0,
+                season = current.nextEpisode.season,
+                episode = current.nextEpisode.episode,
+                sub = current.nextEpisode.title,
+            )
+        } else {
+            baseCard
+        }
+        val key = cardKey(card)
+        val continueRow = rows.firstOrNull { it.id == "continue" }
+        rows = if (continueRow == null) {
+            listOf(HomeRow("continue", "Continue Watching", listOf(card))) + rows
+        } else {
+            rows.map { row ->
+                if (row.id == "continue") row.copy(items = listOf(card) + row.items.filterNot { cardKey(it) == key }) else row
+            }
+        }
+    }
+
     fun navigate(target: TvScreen) {
         when (target) {
             TvScreen.Home -> profileId?.let { loadHome(it) }
@@ -656,6 +708,7 @@ internal fun StreammoreTvApp() {
                         current.introEndSeconds,
                         current.recapEndSeconds,
                         { position, duration ->
+                            updatePlaybackUi(current, position, duration)
                             val profile = profileId
                             val mediaType = current.mediaType
                             val tmdbId = current.tmdbId
