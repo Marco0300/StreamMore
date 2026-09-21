@@ -38,6 +38,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -104,6 +105,8 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import androidx.compose.runtime.snapshotFlow
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 //
@@ -187,6 +190,12 @@ internal fun StreammoreTvApp() {
     var billboard by remember { mutableStateOf<Billboard?>(null) }
     var autoplayPreviews by remember { mutableStateOf(true) }
     var cards by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
+    var browsePage by remember { mutableStateOf(1) }
+    var browseTotalPages by remember { mutableStateOf(1) }
+    var browseTotalResults by remember { mutableStateOf(0) }
+    var browseGenres by remember { mutableStateOf<List<GenreOption>>(emptyList()) }
+    var browseGenreId by remember { mutableStateOf<Int?>(null) }
+    var browseLoadingMore by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<TitleDetail?>(null) }
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
     var liveChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
@@ -227,9 +236,50 @@ internal fun StreammoreTvApp() {
     fun loadCards(mediaType: String) = scope.launch {
         val id = profileId ?: return@launch
         loading = true
-        runCatching { api.browse(mediaType, id) }.onSuccess { cards = it; screen = TvScreen.Browse(mediaType) }
-            .onFailure { error = it.message ?: "Could not load catalogue" }
+        runCatching {
+            val page = api.browse(mediaType, id, 1)
+            val genres = api.genres(id)[mediaType].orEmpty()
+            page to genres
+        }.onSuccess { (page, genres) ->
+            cards = page.items
+            browsePage = page.page
+            browseTotalPages = page.totalPages
+            browseTotalResults = page.totalResults
+            browseGenres = genres
+            browseGenreId = null
+            screen = TvScreen.Browse(mediaType)
+        }.onFailure { error = it.message ?: "Could not load catalogue" }
         loading = false
+    }
+    fun loadBrowseGenre(mediaType: String, genre: GenreOption?) = scope.launch {
+        val id = profileId ?: return@launch
+        loading = true
+        runCatching {
+            if (genre == null) api.browse(mediaType, id, 1) else api.genre(mediaType, genre.id, id, 1)
+        }.onSuccess { page ->
+            cards = page.items
+            browsePage = page.page
+            browseTotalPages = page.totalPages
+            browseTotalResults = page.totalResults
+            browseGenreId = genre?.id
+        }.onFailure { error = it.message ?: "Could not filter catalogue" }
+        loading = false
+    }
+    fun loadMoreBrowse(mediaType: String) = scope.launch {
+        val id = profileId ?: return@launch
+        if (browseLoadingMore || browsePage >= browseTotalPages) return@launch
+        browseLoadingMore = true
+        runCatching {
+            val nextPage = browsePage + 1
+            if (browseGenreId == null) api.browse(mediaType, id, nextPage)
+            else api.genre(mediaType, browseGenreId!!, id, nextPage)
+        }.onSuccess { page ->
+            cards = cards + page.items
+            browsePage = page.page
+            browseTotalPages = page.totalPages
+            browseTotalResults = page.totalResults
+        }.onFailure { error = it.message ?: "Could not load more titles" }
+        browseLoadingMore = false
     }
     fun openDetail(card: MediaCard) = scope.launch {
         val id = profileId ?: return@launch
@@ -333,7 +383,21 @@ internal fun StreammoreTvApp() {
                             },
                         )
                     }
-                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen(if (current.mediaType == "tv") "TV Shows" else "Movies", cards, ::openDetail) }
+                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                        BrowseScreen(
+                            title = if (current.mediaType == "tv") "TV Shows" else "Movies",
+                            cards = cards,
+                            genres = browseGenres,
+                            selectedGenreId = browseGenreId,
+                            page = browsePage,
+                            totalPages = browseTotalPages,
+                            totalResults = browseTotalResults,
+                            loadingMore = browseLoadingMore,
+                            onGenre = { loadBrowseGenre(current.mediaType, it) },
+                            onLoadMore = { loadMoreBrowse(current.mediaType) },
+                            onCard = ::openDetail,
+                        )
+                    }
                     TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail) }
                     TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail) }
@@ -1040,6 +1104,71 @@ internal fun RowSection(
                     Modifier
                 }
                 MediaCardView(item, onCard, modifier)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun BrowseScreen(
+    title: String,
+    cards: List<MediaCard>,
+    genres: List<GenreOption>,
+    selectedGenreId: Int?,
+    page: Int,
+    totalPages: Int,
+    totalResults: Int,
+    loadingMore: Boolean,
+    onGenre: (GenreOption?) -> Unit,
+    onLoadMore: () -> Unit,
+    onCard: (MediaCard) -> Unit,
+) {
+    val gridState = rememberLazyGridState()
+    LaunchedEffect(gridState, cards.size, page, totalPages, selectedGenreId) {
+        snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
+            .collect { lastIndex ->
+                if (lastIndex >= cards.size - 5 && page < totalPages) onLoadMore()
+            }
+    }
+
+    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
+            Text(title, color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            if (totalResults > 0) {
+                Text("${cards.size} of $totalResults", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(start = 14.dp))
+            }
+        }
+        if (genres.isNotEmpty()) {
+            Text("Filter by genre", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+            LazyRow(
+                contentPadding = PaddingValues(vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                item {
+                    TvButton(onClick = { onGenre(null) }, selected = selectedGenreId == null) {
+                        Text("All", color = TextPrimary, fontSize = 13.sp)
+                    }
+                }
+                items(genres) { genre ->
+                    TvButton(onClick = { onGenre(genre) }, selected = selectedGenreId == genre.id) {
+                        Text(genre.name, color = TextPrimary, fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+        if (cards.isEmpty() && !loadingMore) {
+            Text("Nothing to show.", color = Muted, modifier = Modifier.padding(top = 18.dp))
+        }
+        LazyVerticalGrid(
+            columns = GridCells.Adaptive(minSize = PosterWidth),
+            state = gridState,
+            contentPadding = PaddingValues(vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            items(cards) { card -> MediaCardView(card, onCard) }
+            if (loadingMore) {
+                item { CircularProgressIndicator(color = Purple, modifier = Modifier.padding(24.dp)) }
             }
         }
     }

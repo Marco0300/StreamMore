@@ -122,12 +122,22 @@ class StreammoreApi(
             }
         }
 
-    suspend fun browse(mediaType: String, profileId: String, page: Int = 1): List<MediaCard> =
+    suspend fun browse(mediaType: String, profileId: String, page: Int = 1): BrowsePage =
         withContext(Dispatchers.IO) {
             val body = get("/api/browse/$mediaType?profileId=${enc(profileId)}&page=$page")
-            val values = body.optJSONArray("items") ?: JSONArray()
-            List(values.length()) { values.getJSONObject(it).toMediaCard() }
+            body.toBrowsePage()
         }
+
+    suspend fun genre(mediaType: String, genreId: Int, profileId: String, page: Int = 1): BrowsePage =
+        withContext(Dispatchers.IO) {
+            val body = get("/api/genre/$mediaType/$genreId?profileId=${enc(profileId)}&page=$page")
+            body.toBrowsePage()
+        }
+
+    suspend fun genres(profileId: String): Map<String, List<GenreOption>> = withContext(Dispatchers.IO) {
+        val body = get("/api/genres?profileId=${enc(profileId)}")
+        mapOf("movie" to body.toGenreOptions("movie"), "tv" to body.toGenreOptions("tv"))
+    }
 
     suspend fun search(query: String, profileId: String): List<MediaCard> = withContext(Dispatchers.IO) {
         val body = get("/api/search?q=${enc(query)}&profileId=${enc(profileId)}")

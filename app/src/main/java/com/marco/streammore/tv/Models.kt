@@ -101,6 +101,15 @@ data class Person(
     val profile: String? = null,
 )
 
+data class GenreOption(val id: Int, val name: String)
+
+data class BrowsePage(
+    val items: List<MediaCard> = emptyList(),
+    val page: Int = 1,
+    val totalPages: Int = 1,
+    val totalResults: Int = 0,
+)
+
 data class TitleDetail(
     val mediaType: String,
     val tmdbId: Int,
@@ -171,6 +180,24 @@ fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     season = if (has("season") && !isNull("season")) optInt("season") else null,
     episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
 )
+
+fun JSONObject.toBrowsePage(): BrowsePage {
+    val values = optJSONArray("items") ?: JSONArray()
+    return BrowsePage(
+        items = List(values.length()) { values.getJSONObject(it).toMediaCard() },
+        page = optInt("page", 1),
+        totalPages = optInt("totalPages", 1),
+        totalResults = optInt("totalResults", 0),
+    )
+}
+
+fun JSONObject.toGenreOptions(mediaType: String): List<GenreOption> {
+    val values = optJSONArray(mediaType) ?: JSONArray()
+    return List(values.length()) { index ->
+        val item = values.getJSONObject(index)
+        GenreOption(item.optInt("id"), item.optString("name", "Genre"))
+    }
+}
 
 fun JSONObject.toBillboard(): Billboard = Billboard(
     mediaType = optString("mediaType", "movie"),
