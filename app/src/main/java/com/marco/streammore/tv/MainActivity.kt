@@ -512,7 +512,7 @@ internal fun StreammoreTvApp() {
                                         active.title,
                                         active.resumeSeason ?: 1,
                                         active.resumeEpisode ?: 1,
-                                        nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1),
+                                        nextEpisodeAfter(episodes, active.resumeSeason ?: 1, active.resumeEpisode ?: 1, active.seasons),
                                         active.resumePositionMs,
                                         active.introEndSeconds,
                                         active.recapEndSeconds,
@@ -529,7 +529,7 @@ internal fun StreammoreTvApp() {
                                     active.title,
                                     season,
                                     episode,
-                                    nextEpisodeAfter(episodes, season, episode),
+                                    nextEpisodeAfter(episodes, season, episode, active.seasons),
                                     episodes.firstOrNull { it.number == episode }?.positionMs,
                                     active.introEndSeconds,
                                     active.recapEndSeconds,
@@ -554,7 +554,7 @@ internal fun StreammoreTvApp() {
                         },
                         { selectedEpisode ->
                             if (current.season != null) {
-                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number), selectedEpisode.positionMs)
+                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number, detail?.seasons.orEmpty()), selectedEpisode.positionMs)
                             }
                         },
                         current.initialPositionMs,
@@ -582,14 +582,27 @@ internal fun StreammoreTvApp() {
                             }
                         },
                         { next ->
-                            play(
-                                "tv",
-                                next.tmdbId,
-                                next.title,
-                                next.season,
-                                next.episode,
-                                nextEpisodeAfter(episodes, next.season, next.episode),
-                            )
+                            scope.launch {
+                                val crossesSeason = next.season != current.season
+                                val nextSeasonEpisodes = if (crossesSeason) {
+                                    profileId?.let { id -> runCatching { api.season(next.tmdbId, next.season, id) }.getOrDefault(emptyList()) }
+                                        ?: emptyList()
+                                } else {
+                                    emptyList()
+                                }
+                                if (nextSeasonEpisodes.isNotEmpty()) episodes = nextSeasonEpisodes
+                                val activeEpisodes = if (crossesSeason) nextSeasonEpisodes else episodes
+                                val nextEpisode = activeEpisodes.firstOrNull { it.number == next.episode }
+                                play(
+                                    "tv",
+                                    next.tmdbId,
+                                    nextEpisode?.name ?: next.title,
+                                    next.season,
+                                    next.episode,
+                                    nextEpisodeAfter(activeEpisodes, next.season, next.episode, detail?.seasons.orEmpty()),
+                                    nextEpisode?.positionMs,
+                                )
+                            }
                         },
                     ) {
                         screen = playerReturn ?: TvScreen.Home

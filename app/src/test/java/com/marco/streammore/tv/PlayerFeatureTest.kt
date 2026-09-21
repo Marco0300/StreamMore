@@ -19,6 +19,15 @@ class PlayerFeatureTest {
     }
 
     @Test
+    fun nextEpisodeMovesToTheFirstEpisodeOfTheNextSeason() {
+        val episodes = listOf(Episode(10, "Season finale"))
+        val seasons = listOf(Season(1, "Season 1", 10), Season(2, "Season 2", 8))
+
+        val next = nextEpisodeAfter(episodes, season = 1, episode = 10, seasons = seasons)
+
+        assertEquals(NextEpisodeInfo("tv", 2, "Episode 1", 1), next)
+    }
+    @Test
     fun noNextEpisodeIsReturnedAfterTheLastEpisode() {
         val episodes = listOf(Episode(1, "Pilot"), Episode(2, "Finale"))
 

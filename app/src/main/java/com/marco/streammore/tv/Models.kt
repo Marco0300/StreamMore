@@ -81,10 +81,15 @@ data class NextEpisodeInfo(
     val tmdbId: Int = 0,
 )
 
-fun nextEpisodeAfter(episodes: List<Episode>, season: Int, episode: Int): NextEpisodeInfo? =
+fun nextEpisodeAfter(episodes: List<Episode>, season: Int, episode: Int, seasons: List<Season> = emptyList()): NextEpisodeInfo? {
     episodes.firstOrNull { it.number == episode + 1 }?.let {
-        NextEpisodeInfo("tv", season, it.name, it.number)
+        return NextEpisodeInfo("tv", season, it.name, it.number)
     }
+    val nextSeason = seasons
+        .filter { it.number > season && it.episodes > 0 }
+        .minByOrNull { it.number }
+    return nextSeason?.let { NextEpisodeInfo("tv", it.number, "Episode 1", 1) }
+}
 
 enum class VideoQuality(val label: String, val width: Int, val height: Int) {
     Auto("Auto", Int.MAX_VALUE, Int.MAX_VALUE),
