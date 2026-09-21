@@ -295,6 +295,37 @@ class StreammoreApi(
         }
     }
 
+    suspend fun liveSchedule(): LiveSchedule = withContext(Dispatchers.IO) {
+        val body = get("/api/livetv/schedule?live=1")
+        val categories = body.optJSONArray("categories") ?: JSONArray()
+        LiveSchedule(
+            available = body.optBoolean("available", categories.length() > 0),
+            reason = body.optString("reason", null),
+            categories = List(categories.length()) { categoryIndex ->
+                val category = categories.getJSONObject(categoryIndex)
+                val events = category.optJSONArray("events") ?: JSONArray()
+                LiveEventCategory(
+                    name = category.optString("name", "Events"),
+                    icon = category.optString("icon", "📺"),
+                    events = List(events.length()) { eventIndex ->
+                        val event = events.getJSONObject(eventIndex)
+                        val eventChannels = event.optJSONArray("channels") ?: JSONArray()
+                        LiveEvent(
+                            id = event.optString("id", "$categoryIndex-$eventIndex"),
+                            time = event.optString("time", null),
+                            localTime = event.optString("localTime", null),
+                            title = event.optString("title", "Live event"),
+                            isLive = event.optBoolean("isLive", false),
+                            channelIds = List(eventChannels.length()) { channelIndex ->
+                                eventChannels.getJSONObject(channelIndex).optString("channelId")
+                            }.filter { it.isNotBlank() },
+                        )
+                    },
+                )
+            },
+        )
+    }
+
     suspend fun liveStreams(channelId: String, profileId: String? = null): List<StreamSource> = withContext(Dispatchers.IO) {
         val suffix = profileId?.let { "?profileId=${enc(it)}" } ?: ""
         val body = get("/api/livetv/stream/${enc(channelId)}$suffix")

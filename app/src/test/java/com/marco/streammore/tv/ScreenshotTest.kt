@@ -181,14 +181,14 @@ class ScreenshotTest {
     @Test
     fun liveTv() = shot("07-livetv") {
         AppShell(TvScreen.Live, { }, Fake.profiles[0]) {
-            LiveScreen(Fake.channels, null, { }, { })
+            LiveScreen(Fake.channels, null, null, { }, { })
         }
     }
 
     @Test
     fun liveTvEmpty() = shot("08-livetv-empty") {
         AppShell(TvScreen.Live, { }, Fake.profiles[0]) {
-            LiveScreen(emptyList(), null, { }, { })
+            LiveScreen(emptyList(), null, null, { }, { })
         }
     }
 

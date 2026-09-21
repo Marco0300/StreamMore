@@ -257,6 +257,7 @@ internal fun StreammoreTvApp() {
     var detail by remember { mutableStateOf<TitleDetail?>(null) }
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
     var liveChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
+    var liveSchedule by remember { mutableStateOf<LiveSchedule?>(null) }
     var activity by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -397,6 +398,7 @@ internal fun StreammoreTvApp() {
         error = null; screen = TvScreen.Live; loading = true
         runCatching { api.liveChannels(id) }.onSuccess { liveChannels = it }
             .onFailure { error = it.message ?: "Could not load Live TV" }
+        runCatching { api.liveSchedule() }.onSuccess { liveSchedule = it }
         loading = false
     }
     fun playLive(channel: LiveChannel) = scope.launch {
@@ -496,7 +498,7 @@ internal fun StreammoreTvApp() {
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail) }
                     TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail) }
                     TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
-                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, liveSchedule, error, ::playLive, ::loadLive) }
                     is TvScreen.Detail -> {
                         val active = detail
                         if (active == null) LoadingScreen(error) else DetailScreen(
@@ -1496,26 +1498,100 @@ internal fun ActivityScreen(items: List<ActivityEntry>) {
 }
 
 @Composable
-internal fun LiveScreen(channels: List<LiveChannel>, error: String?, onPlay: (LiveChannel) -> Unit, onRefresh: () -> Unit) {
+internal fun LiveScreen(
+    channels: List<LiveChannel>,
+    schedule: LiveSchedule?,
+    error: String?,
+    onPlay: (LiveChannel) -> Unit,
+    onRefresh: () -> Unit,
+) {
+    var search by remember { mutableStateOf("") }
+    var selectedCategory by remember { mutableStateOf("All") }
+    val categories = remember(channels) {
+        listOf("All") + channels.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
+    }
+    val activeCategory = selectedCategory.takeIf { it in categories } ?: "All"
+    val filteredChannels = channels.filter { channel ->
+        val matchesCategory = activeCategory == "All" || channel.genre == activeCategory
+        val needle = search.trim()
+        val matchesSearch = needle.isBlank() || channel.name.contains(needle, ignoreCase = true) ||
+            channel.genre.contains(needle, ignoreCase = true) || channel.country.contains(needle, ignoreCase = true)
+        matchesCategory && matchesSearch
+    }
     val firstChannel = remember { FocusRequester() }
-    FocusFirstWhenReady(channels.isNotEmpty(), firstChannel)
+    FocusFirstWhenReady(filteredChannels.isNotEmpty(), firstChannel)
+    val channelById = remember(channels) { channels.associateBy { it.channelId } }
+    val epgEvents = remember(schedule) {
+        schedule?.categories?.flatMap { category ->
+            category.events.map { event -> category.name to event }
+        }?.sortedWith(compareByDescending<Pair<String, LiveEvent>> { it.second.isLive }.thenBy { it.second.localTime ?: it.second.time ?: "" })
+            ?: emptyList()
+    }
+
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
             Text("Live TV", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(20.dp))
             TvButton(onRefresh) { Text("Refresh", color = TextPrimary) }
         }
-        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 14.dp)) }
-        if (channels.isEmpty() && error == null) {
-            Text("No Live TV channels were returned by the backend.", color = Muted, modifier = Modifier.padding(top = 20.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            OutlinedTextField(
+                value = search,
+                onValueChange = { search = it },
+                singleLine = true,
+                label = { Text("Search channels") },
+                modifier = Modifier.width(360.dp),
+            )
+            Text("${filteredChannels.size} channels", color = Muted, fontSize = 13.sp)
+        }
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items(categories) { category ->
+                TvButton(onClick = { selectedCategory = category }, selected = category == activeCategory) {
+                    Text(category, color = TextPrimary, fontSize = 13.sp)
+                }
+            }
+        }
+        Text("Now / EPG", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+        if (epgEvents.isEmpty()) {
+            Text(schedule?.reason ?: "No current EPG events are available.", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp))
+        } else {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().height(112.dp).padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                items(epgEvents) { (category, event) ->
+                    val eventChannel = event.channelIds.firstNotNullOfOrNull { channelById[it] }
+                    TvCard(
+                        onClick = { eventChannel?.let(onPlay) },
+                        modifier = Modifier.width(240.dp).height(100.dp),
+                        contentPadding = PaddingValues(10.dp),
+                    ) {
+                        Text(if (event.isLive) "● LIVE · $category" else "${event.localTime ?: event.time ?: ""} · $category", color = if (event.isLive) MatchGreen else Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(event.title, color = TextPrimary, fontSize = 13.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        eventChannel?.let { Text(it.name, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                    }
+                }
+            }
+        }
+        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp)) }
+        if (filteredChannels.isEmpty()) {
+            Text("No channels match this search or category.", color = Muted, modifier = Modifier.padding(top = 20.dp))
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 168.dp),
+            modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            itemsIndexed(channels) { index, channel ->
+            itemsIndexed(filteredChannels) { index, channel ->
                 val tileModifier = if (index == 0) Modifier.height(116.dp).focusRequester(firstChannel) else Modifier.height(116.dp)
                 TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
                     Text("📺", fontSize = 26.sp)

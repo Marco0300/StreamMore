@@ -160,6 +160,27 @@ data class LiveChannel(
     val country: String,
 )
 
+data class LiveSchedule(
+    val available: Boolean = false,
+    val reason: String? = null,
+    val categories: List<LiveEventCategory> = emptyList(),
+)
+
+data class LiveEventCategory(
+    val name: String,
+    val icon: String = "📺",
+    val events: List<LiveEvent> = emptyList(),
+)
+
+data class LiveEvent(
+    val id: String,
+    val time: String? = null,
+    val localTime: String? = null,
+    val title: String,
+    val isLive: Boolean = false,
+    val channelIds: List<String> = emptyList(),
+)
+
 data class ActivityEntry(
     val mediaType: String,
     val tmdbId: Int,
