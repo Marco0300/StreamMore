@@ -68,6 +68,7 @@ data class Episode(
     val name: String,
     val overview: String? = null,
     val still: String? = null,
+    val airDate: String? = null,
     val progress: Double = 0.0,
     val watched: Boolean = false,
     val positionMs: Long = 0L,
@@ -137,6 +138,7 @@ data class TitleDetail(
     val resumeSeason: Int? = null,
     val resumeEpisode: Int? = null,
     val resumeNext: Boolean = false,
+    val releaseDate: String? = null,
     val introEndSeconds: Long? = null,
     val recapEndSeconds: Long? = null,
     val genres: List<String> = emptyList(),
@@ -144,11 +146,22 @@ data class TitleDetail(
     val cast: List<Person> = emptyList(),
 )
 
+internal fun formatReleaseDate(value: String?): String? {
+    val parts = value?.trim()?.split('-') ?: return null
+    if (parts.size != 3) return value?.takeIf { it.isNotBlank() }
+    val month = parts[1].toIntOrNull()?.let {
+        listOf("", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec").getOrNull(it)
+    } ?: return value
+    val day = parts[2].toIntOrNull() ?: return value
+    return "$month $day, ${parts[0]}"
+}
+
 data class StreamSource(
     val name: String,
     val quality: String,
     val url: String,
 )
+
 
 data class SubtitleTrack(val label: String, val language: String, val url: String)
 

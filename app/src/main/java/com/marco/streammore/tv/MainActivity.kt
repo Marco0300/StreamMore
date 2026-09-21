@@ -1711,6 +1711,7 @@ internal fun DetailScreen(
                         listOfNotNull(
                             detail.year,
                             detail.runtime?.let { "${it}m" },
+                            detail.releaseDate?.let { formatReleaseDate(it)?.let { date -> "Released $date" } },
                             detail.rating?.let { "${(it * 10).toInt()}% Match" },
                         ).joinToString(" · "),
                         color = Muted, fontSize = 14.sp,
@@ -2534,7 +2535,13 @@ internal fun PlayerScreen(
                                     selected = item.number == episode,
                                     modifier = keepControlsVisible(Modifier.then(if (item.number == episodeList.firstOrNull()?.number) Modifier.focusRequester(episodeFocus) else Modifier)).fillMaxWidth(),
                                 ) {
-                                    Text("${item.number}. ${item.name}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${item.number}. ${item.name}${item.airDate?.let { " · ${formatReleaseDate(it) ?: it}" } ?: ""}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}",
+                                        color = TextPrimary,
+                                        fontSize = 14.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
                                 }
                             }
                         }

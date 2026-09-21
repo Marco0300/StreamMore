@@ -84,6 +84,7 @@ class StreammoreApi(
                         ?: progressFraction(progress.doubleOrNull("position"), progress.doubleOrNull("duration"))
                     percent >= 0.95 && progress.optJSONObject("upNext")?.toResumePoint() != null
                 } ?: false,
+                releaseDate = body.optString("releaseDate", null),
                 introEndSeconds = marker?.doubleOrNull("introEnd")?.toLong(),
                 recapEndSeconds = marker?.doubleOrNull("recapEnd")?.toLong(),
                 genres = body.toGenreNames(),
@@ -108,6 +109,7 @@ class StreammoreApi(
                     name = e.optString("name", "Episode ${it + 1}"),
                     overview = e.optString("overview", null),
                     still = e.optString("still", null),
+                    airDate = e.optString("airDate", null),
                     progress = fraction,
                     watched = isWatchedProgress(fraction),
                     positionMs = resumablePositionMs(

@@ -48,6 +48,11 @@ class PlayerFeatureTest {
     }
 
     @Test
+    fun releaseDatesAreShownAsReadableLabels() {
+        assertEquals("Jan 5, 2024", formatReleaseDate("2024-01-05"))
+        assertEquals("2024", formatReleaseDate("2024"))
+    }
+    @Test
     fun playerTimeMatchesTheWebPlayerFormat() {
         assertEquals("0:00", formatPlayerTime(0))
         assertEquals("1:05", formatPlayerTime(65_000))
