@@ -808,23 +808,41 @@ internal fun LoginScreen(loading: Boolean, error: String?, onLogin: (String, Str
 
 @Composable
 internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(56.dp)) {
-        Text("Who's watching?", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
-        Spacer(Modifier.height(24.dp))
-        if (profiles.isEmpty()) {
-            Text("No profiles are available for this account.", color = Muted)
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            profiles.forEach { profile ->
-                TvCard({ onSelect(profile.id) }, Modifier.width(180.dp).height(170.dp)) {
-                    Text(profile.avatar ?: profile.name.take(1).uppercase(), fontSize = 42.sp)
-                    Spacer(Modifier.height(6.dp))
-                    Text(profile.name, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    if (profile.kids) Text("KIDS", color = WarnYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Who's watching?", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+            Spacer(Modifier.height(28.dp))
+            if (profiles.isEmpty()) {
+                Text("No profiles are available for this account.", color = Muted)
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(28.dp), verticalAlignment = Alignment.Top) {
+                    profiles.forEach { profile ->
+                        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(154.dp)) {
+                            TvCard(
+                                { onSelect(profile.id) },
+                                Modifier.size(142.dp),
+                                shape = CircleShape,
+                            ) {
+                                Text(profile.avatar ?: profile.name.take(1).uppercase(), fontSize = 42.sp)
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Text(
+                                profile.name,
+                                color = TextPrimary,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (profile.kids) Text("KIDS", color = WarnYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
+            error?.let {
+                Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 20.dp))
+            }
         }
-        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 20.dp)) }
     }
 }
 
