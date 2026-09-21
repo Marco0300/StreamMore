@@ -1844,6 +1844,9 @@ private fun EpisodeRow(episode: Episode, onClick: () -> Unit) {
                     color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
+                episode.airDate?.let { date ->
+                    Text("Release date: ${formatReleaseDate(date) ?: date}", color = Purple, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
                 episode.overview?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(4.dp))
                     Text(it, color = Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
