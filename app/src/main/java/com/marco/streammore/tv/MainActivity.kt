@@ -3,6 +3,7 @@ package com.marco.streammore.tv
 import android.app.Activity
 import android.graphics.Matrix
 import android.net.Uri
+import android.os.SystemClock
 import android.os.Bundle
 import android.util.Log
 import android.view.TextureView
@@ -17,8 +18,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -842,7 +841,6 @@ internal fun TvCard(
  * [focused] flag rather than of live focus ownership, so it can be rendered and
  * inspected in isolation.
  */
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun TvCardSurface(
     focused: Boolean,
@@ -858,16 +856,33 @@ internal fun TvCardSurface(
     val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
     val border by animateColorAsState(if (focused) BorderFocused else BorderIdle, label = "focusBorder")
 
+    var centerDownAt by remember { mutableStateOf<Long?>(null) }
+    val cardInteractionModifier = modifier
+        .graphicsLayer { scaleX = scale; scaleY = scale }
+        .onPreviewKeyEvent { event ->
+            if (onLongClick == null || event.key !in setOf(Key.DirectionCenter, Key.Enter)) return@onPreviewKeyEvent false
+            when (event.type) {
+                KeyEventType.KeyDown -> {
+                    if (centerDownAt == null) centerDownAt = event.nativeKeyEvent.eventTime
+                    false
+                }
+                KeyEventType.KeyUp -> {
+                    val heldMs = centerDownAt?.let { event.nativeKeyEvent.eventTime - it } ?: 0L
+                    centerDownAt = null
+                    if (heldMs >= 550L) {
+                        onLongClick()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                else -> false
+            }
+        }
+        .clickable(onClick = onClick)
+
     Card(
-        modifier = modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .then(
-                if (onLongClick != null) {
-                    Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
-                } else {
-                    Modifier.clickable(onClick = onClick)
-                },
-            ),
+        modifier = cardInteractionModifier,
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = if (focused) PanelFocused else Panel),
         border = BorderStroke(if (focused) 2.dp else 1.dp, border),
