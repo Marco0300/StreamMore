@@ -1997,6 +1997,9 @@ internal fun PlayerScreen(
                 isFocusable = false
                 isFocusableInTouchMode = false
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                setEnableComposeSurfaceSyncWorkaround(true)
+                setKeepContentOnPlayerReset(true)
+                setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
                 useController = false
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             } },
