@@ -71,6 +71,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
@@ -232,6 +234,21 @@ internal sealed interface TvScreen {
     ) : TvScreen
 }
 
+private fun routeStateKey(screen: TvScreen): String = when (screen) {
+    TvScreen.Home -> "home"
+    TvScreen.Profiles -> "profiles"
+    TvScreen.Login -> "login"
+    is TvScreen.ProfilePin -> "profile-pin:${screen.profileId}"
+    is TvScreen.Browse -> "browse:${screen.mediaType}"
+    TvScreen.Search -> "search"
+    TvScreen.NewHot -> "new-hot"
+    TvScreen.MyList -> "my-list"
+    TvScreen.Activity -> "activity"
+    TvScreen.Live -> "live"
+    is TvScreen.Detail -> "detail:${screen.mediaType}:${screen.tmdbId}"
+    is TvScreen.Player -> "player"
+}
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -273,6 +290,8 @@ internal fun StreammoreTvApp() {
     // The screen that opened the player. Back from playback returns there instead
     // of always dumping the user back onto Home.
     var playerReturn by remember { mutableStateOf<TvScreen?>(null) }
+    var detailReturn by remember { mutableStateOf<TvScreen?>(null) }
+    val routeStateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(error) {
         if (error != null) {
@@ -379,7 +398,7 @@ internal fun StreammoreTvApp() {
     fun openDetail(card: MediaCard) = scope.launch {
         val id = profileId ?: return@launch
         error = null
-        loading = true; detail = null; episodes = emptyList(); screen = TvScreen.Detail(card.mediaType, card.tmdbId)
+        loading = true; detail = null; episodes = emptyList(); detailReturn = screen; screen = TvScreen.Detail(card.mediaType, card.tmdbId)
         runCatching { api.detail(card.mediaType, card.tmdbId, id) }
             .onSuccess { loaded ->
                 detail = loaded
@@ -580,7 +599,8 @@ internal fun StreammoreTvApp() {
     MaterialTheme(colorScheme = StreammoreScheme) {
         Surface(Modifier.fillMaxSize(), color = Bg) {
             Box(Modifier.fillMaxSize()) {
-                when (val current = screen) {
+                routeStateHolder.SaveableStateProvider(routeStateKey(screen)) {
+                    when (val current = screen) {
                     TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
                     TvScreen.Profiles -> ProfileScreen(profiles, error) { profile ->
                         if (profile.kids && profile.hasPin) {
@@ -646,7 +666,7 @@ internal fun StreammoreTvApp() {
                             active,
                             episodes,
                             error,
-                            { screen = TvScreen.Home },
+                            { screen = detailReturn ?: TvScreen.Home; detailReturn = null },
                             {
                                 if (active.mediaType == "tv") {
                                     val resumeSeason = active.resumeSeason ?: 1
@@ -797,6 +817,7 @@ internal fun StreammoreTvApp() {
                         screen = playerReturn ?: TvScreen.Home
                         playerReturn = null
                     }
+                }
                 }
                 if (loading && screen !is TvScreen.Player) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Purple)
                 if (error != null && screen !is TvScreen.Login && screen !is TvScreen.Live && screen !is TvScreen.Detail && screen !is TvScreen.Player) {
@@ -1011,12 +1032,13 @@ internal fun MediaCardView(
     onClick: (MediaCard) -> Unit,
     modifier: Modifier = Modifier,
     onLongPress: (MediaCard) -> Unit = {},
+    onFocus: (() -> Unit)? = null,
 ) {
     Column(Modifier.width(PosterWidth)) {
         TvCard(
             onClick = { onClick(card) },
             onLongClick = { onLongPress(card) },
-            modifier = modifier.fillMaxWidth(),
+            modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus?.invoke() },
         ) {
             Box {
                 AsyncImage(
@@ -1565,6 +1587,15 @@ internal fun BrowseScreen(
     onLongCard: (MediaCard) -> Unit = {},
 ) {
     val gridState = rememberLazyGridState()
+    var focusedCardKey by rememberSaveable(title) { mutableStateOf<String?>(null) }
+    val restoreFocus = remember(focusedCardKey) { FocusRequester() }
+    LaunchedEffect(focusedCardKey, cards) {
+        val target = focusedCardKey
+        if (target != null && cards.any { "${it.mediaType}:${it.tmdbId}" == target }) {
+            withFrameNanos { }
+            runCatching { restoreFocus.requestFocus() }
+        }
+    }
     LaunchedEffect(gridState, cards.size, page, totalPages, selectedGenreId) {
         snapshotFlow { gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1 }
             .collect { lastIndex ->
@@ -1607,7 +1638,11 @@ internal fun BrowseScreen(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            items(cards) { card -> MediaCardView(card, onCard, Modifier, onLongCard) }
+            items(cards) { card ->
+                val key = "${card.mediaType}:${card.tmdbId}"
+                val cardModifier = if (key == focusedCardKey) Modifier.focusRequester(restoreFocus) else Modifier
+                MediaCardView(card, onCard, cardModifier, onLongCard) { focusedCardKey = key }
+            }
             if (loadingMore) {
                 item { CircularProgressIndicator(color = Purple, modifier = Modifier.padding(24.dp)) }
             }
@@ -1623,7 +1658,17 @@ internal fun GridScreen(
     onLongCard: (MediaCard) -> Unit = {},
 ) {
     val firstCard = remember { FocusRequester() }
-    FocusFirstWhenReady(cards.isNotEmpty(), firstCard)
+    val gridState = rememberLazyGridState()
+    var focusedCardKey by rememberSaveable(title) { mutableStateOf<String?>(null) }
+    val restoreFocus = remember(focusedCardKey) { FocusRequester() }
+    LaunchedEffect(focusedCardKey, cards) {
+        val target = focusedCardKey
+        if (target != null && cards.any { "${it.mediaType}:${it.tmdbId}" == target }) {
+            withFrameNanos { }
+            runCatching { restoreFocus.requestFocus() }
+        }
+    }
+    FocusFirstWhenReady(cards.isNotEmpty() && focusedCardKey == null, firstCard)
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Text(title, color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
         if (cards.isEmpty()) {
@@ -1631,12 +1676,19 @@ internal fun GridScreen(
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = PosterWidth),
+            state = gridState,
             contentPadding = PaddingValues(vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             itemsIndexed(cards) { index, card ->
-                MediaCardView(card, onCard, if (index == 0) Modifier.focusRequester(firstCard) else Modifier, onLongCard)
+                val key = "${card.mediaType}:${card.tmdbId}"
+                val cardModifier = when {
+                    key == focusedCardKey -> Modifier.focusRequester(restoreFocus)
+                    index == 0 -> Modifier.focusRequester(firstCard)
+                    else -> Modifier
+                }
+                MediaCardView(card, onCard, cardModifier, onLongCard) { focusedCardKey = key }
             }
         }
     }
@@ -1728,8 +1780,8 @@ internal fun LiveScreen(
     onPlay: (LiveChannel) -> Unit,
     onRefresh: () -> Unit,
 ) {
-    var search by remember { mutableStateOf("") }
-    var selectedCategory by remember { mutableStateOf("All") }
+    var search by rememberSaveable { mutableStateOf("") }
+    var selectedCategory by rememberSaveable { mutableStateOf("All") }
     val categories = remember(channels) {
         listOf("All") + channels.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
     }
@@ -1742,7 +1794,17 @@ internal fun LiveScreen(
         matchesCategory && matchesSearch
     }
     val firstChannel = remember { FocusRequester() }
-    FocusFirstWhenReady(filteredChannels.isNotEmpty(), firstChannel)
+    val gridState = rememberLazyGridState()
+    var focusedChannelId by rememberSaveable { mutableStateOf<String?>(null) }
+    val restoreFocus = remember(focusedChannelId) { FocusRequester() }
+    LaunchedEffect(focusedChannelId, filteredChannels) {
+        val target = focusedChannelId
+        if (target != null && filteredChannels.any { it.channelId == target }) {
+            withFrameNanos { }
+            runCatching { restoreFocus.requestFocus() }
+        }
+    }
+    FocusFirstWhenReady(filteredChannels.isNotEmpty() && focusedChannelId == null, firstChannel)
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
@@ -1780,13 +1842,18 @@ internal fun LiveScreen(
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = 168.dp),
+            state = gridState,
             modifier = Modifier.weight(1f),
             contentPadding = PaddingValues(vertical = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             itemsIndexed(filteredChannels) { index, channel ->
-                val tileModifier = if (index == 0) Modifier.height(116.dp).focusRequester(firstChannel) else Modifier.height(116.dp)
+                val tileModifier = when {
+                    channel.channelId == focusedChannelId -> Modifier.height(116.dp).focusRequester(restoreFocus)
+                    index == 0 -> Modifier.height(116.dp).focusRequester(firstChannel)
+                    else -> Modifier.height(116.dp)
+                }.onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
                 TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
                     Text("📺", fontSize = 26.sp)
                     Spacer(Modifier.height(4.dp))
