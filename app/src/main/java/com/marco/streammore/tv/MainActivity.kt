@@ -111,6 +111,7 @@ import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
@@ -231,6 +232,8 @@ internal sealed interface TvScreen {
         val poster: String? = null,
         val backdrop: String? = null,
         val year: String? = null,
+        val audioSource: String? = null,
+        val playbackId: String? = null,
     ) : TvScreen
 }
 
@@ -428,16 +431,18 @@ internal fun StreammoreTvApp() {
         year: String? = null,
     ) = scope.launch {
         val id = profileId ?: return@launch
+        val playbackId = "${System.currentTimeMillis()}-${mediaType}-${tmdbId}"
         error = null
         playerReturn = if (screen is TvScreen.Player) playerReturn else screen
         loading = true
         runCatching {
-            val sources = api.streams(mediaType, tmdbId, id, season, episode)
+            val sources = api.streams(mediaType, tmdbId, id, playbackId, season, episode)
             val source = sources.firstOrNull()
                 ?: error("No playable sources were found")
+            val tvSource = source.tvUrl()
             val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
             TvScreen.Player(
-                source.url,
+                tvSource,
                 title,
                 subs,
                 nextEpisode?.copy(tmdbId = tmdbId),
@@ -452,6 +457,7 @@ internal fun StreammoreTvApp() {
                 poster,
                 backdrop,
                 year,
+                playbackId = playbackId,
             )
         }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
         loading = false
@@ -461,14 +467,15 @@ internal fun StreammoreTvApp() {
         playerReturn = screen
         loading = true
         runCatching {
-            val url = api.trailer(mediaType, tmdbId)
+            val trailer = api.trailerPlayback(mediaType, tmdbId)
                 ?: error("No trailer is available for this title")
             TvScreen.Player(
-                source = url,
+                source = trailer.videoUrl,
                 title = "$title — Trailer",
                 mediaType = null,
                 tmdbId = null,
-                sources = listOf(StreamSource("Trailer", "Trailer", url)),
+                sources = listOf(StreamSource("Trailer", "Trailer", trailer.videoUrl)),
+                audioSource = trailer.audioUrl,
             )
         }.onSuccess { screen = it }
             .onFailure { error = it.message ?: "Could not load trailer" }
@@ -485,10 +492,11 @@ internal fun StreammoreTvApp() {
     }
     fun playLive(channel: LiveChannel) = scope.launch {
         val id = profileId
+        val playbackId = "${System.currentTimeMillis()}-live-${channel.channelId}"
         playerReturn = screen
         error = null; loading = true
-        runCatching { api.liveStreams(channel.channelId, id).firstOrNull() ?: error("This channel is temporarily unavailable") }
-            .onSuccess { screen = TvScreen.Player(it.url, channel.name) }
+        runCatching { api.liveStreams(channel.channelId, id, playbackId).firstOrNull() ?: error("This channel is temporarily unavailable") }
+            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId) }
             .onFailure { error = it.message ?: "This channel is temporarily unavailable" }
         loading = false
     }
@@ -751,7 +759,7 @@ internal fun StreammoreTvApp() {
                         current.sources,
                         episodes,
                         { selected, position ->
-                            screen = current.copy(source = selected.url, initialPositionMs = position)
+                            screen = current.copy(source = selected.tvUrl(), initialPositionMs = position)
                         },
                         { selectedEpisode ->
                             if (current.season != null) {
@@ -761,6 +769,7 @@ internal fun StreammoreTvApp() {
                         current.initialPositionMs,
                         current.introEndSeconds,
                         current.recapEndSeconds,
+                        current.audioSource,
                         { position, duration ->
                             updatePlaybackUi(current, position, duration)
                             val profile = profileId
@@ -782,6 +791,7 @@ internal fun StreammoreTvApp() {
                                             poster = current.poster,
                                             backdrop = current.backdrop,
                                             year = current.year,
+                                            playbackId = current.playbackId,
                                         )
                                     }
                                 }
@@ -2223,6 +2233,7 @@ internal fun PlayerScreen(
     initialPositionMs: Long? = null,
     introEndSeconds: Long? = null,
     recapEndSeconds: Long? = null,
+    audioSource: String? = null,
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
@@ -2266,15 +2277,16 @@ internal fun PlayerScreen(
     val playFocus = remember(source) { FocusRequester() }
     val seekFocus = remember(source) { FocusRequester() }
     val episodeFocus = remember(source) { FocusRequester() }
-    val trackSelector = remember(source) { DefaultTrackSelector(context) }
-    val player = remember(source, trackSelector) {
+    val trackSelector = remember(source, audioSource) { DefaultTrackSelector(context) }
+    val player = remember(source, audioSource, trackSelector) {
         // Subtitle files come from the authenticated /api/subtitles/file route, so
         // ExoPlayer's own requests have to carry the session cookie.
         val headers = if (cookie.isNullOrBlank()) emptyMap() else mapOf("Cookie" to cookie)
         val dataSourceFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
+        val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context)
             .setTrackSelector(trackSelector)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(dataSourceFactory))
+            .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .apply {
                 addListener(object : Player.Listener {
@@ -2297,7 +2309,17 @@ internal fun PlayerScreen(
                         .setSelectionFlags(C.SELECTION_FLAG_AUTOSELECT)
                         .build()
                 }
-                setMediaItem(MediaItem.Builder().setUri(Uri.parse(source)).setSubtitleConfigurations(tracks).build())
+                val videoItem = MediaItem.Builder()
+                    .setUri(Uri.parse(source))
+                    .setSubtitleConfigurations(tracks)
+                    .build()
+                if (!audioSource.isNullOrBlank()) {
+                    val videoMediaSource = mediaSourceFactory.createMediaSource(videoItem)
+                    val audioMediaSource = mediaSourceFactory.createMediaSource(MediaItem.fromUri(Uri.parse(audioSource)))
+                    setMediaSource(MergingMediaSource(videoMediaSource, audioMediaSource))
+                } else {
+                    setMediaItem(videoItem)
+                }
                 initialPositionMs?.takeIf { it > 0L }?.let { seekTo(it) }
                 prepare()
                 playWhenReady = true

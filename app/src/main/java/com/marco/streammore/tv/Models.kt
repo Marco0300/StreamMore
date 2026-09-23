@@ -11,6 +11,11 @@ data class Profile(
     val hasPin: Boolean = false,
 )
 
+data class TrailerPlayback(
+    val videoUrl: String,
+    val audioUrl: String? = null,
+)
+
 data class MediaCard(
     val mediaType: String,
     val tmdbId: Int,
@@ -160,7 +165,12 @@ data class StreamSource(
     val name: String,
     val quality: String,
     val url: String,
-)
+    val backend: String? = null,
+    val nativeUrl: String? = null,
+    val sourceExtension: String? = null,
+) {
+    fun tvUrl(): String = nativeUrl?.takeIf { it.isNotBlank() } ?: url
+}
 
 
 data class SubtitleTrack(val label: String, val language: String, val url: String)

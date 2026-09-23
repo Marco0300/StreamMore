@@ -128,15 +128,24 @@ class StreammoreApi(
      * YouTube embed renders as a blank surface on Android TV and never starts, so
      * the trailer is played natively instead.
      */
-    suspend fun trailer(mediaType: String, tmdbId: Int): String? = withContext(Dispatchers.IO) {
-        val body = get("/api/trailer/$mediaType/$tmdbId")
+    suspend fun trailerPlayback(mediaType: String, tmdbId: Int): TrailerPlayback? = withContext(Dispatchers.IO) {
+        val body = get("/api/trailer/$mediaType/$tmdbId?audio=1")
+        body.optString("url", null)?.takeIf { it.isNotBlank() }?.let { video ->
+            TrailerPlayback(video, body.optString("audioUrl", null)?.takeIf { it.isNotBlank() })
+        }
+    }
+
+    suspend fun trailer(mediaType: String, tmdbId: Int, withAudio: Boolean = false): String? = withContext(Dispatchers.IO) {
+        val suffix = if (withAudio) "?audio=1" else ""
+        val body = get("/api/trailer/$mediaType/$tmdbId$suffix")
         body.optString("url", null)?.takeIf { it.isNotBlank() }
     }
 
-    suspend fun streams(mediaType: String, tmdbId: Int, profileId: String, season: Int? = null, episode: Int? = null): List<StreamSource> =
+    suspend fun streams(mediaType: String, tmdbId: Int, profileId: String, playbackId: String? = null, season: Int? = null, episode: Int? = null): List<StreamSource> =
         withContext(Dispatchers.IO) {
             val params = buildString {
                 append("mediaType=${enc(mediaType)}&tmdbId=$tmdbId&profileId=${enc(profileId)}")
+                playbackId?.let { append("&playbackId=${enc(it)}") }
                 if (season != null) append("&season=$season")
                 if (episode != null) append("&episode=$episode")
             }
@@ -148,6 +157,9 @@ class StreammoreApi(
                     name = s.optString("name", "Source ${it + 1}"),
                     quality = s.optString("quality", "Auto"),
                     url = s.optString("url"),
+                    backend = s.optString("backend").takeIf { it.isNotBlank() },
+                    nativeUrl = s.optString("nativeUrl").takeIf { it.isNotBlank() },
+                    sourceExtension = s.optString("sourceExtension").takeIf { it.isNotBlank() },
                 )
             }
         }
@@ -165,10 +177,12 @@ class StreammoreApi(
         poster: String? = null,
         backdrop: String? = null,
         year: String? = null,
+        playbackId: String? = null,
     ) = withContext(Dispatchers.IO) {
         post("/api/progress", JSONObject().apply {
             put("profileId", profileId)
             put("mediaType", mediaType)
+            playbackId?.let { put("playbackId", it) }
             put("tmdbId", tmdbId)
             put("title", title)
             poster?.let { put("poster", it) }
@@ -338,8 +352,11 @@ class StreammoreApi(
         )
     }
 
-    suspend fun liveStreams(channelId: String, profileId: String? = null): List<StreamSource> = withContext(Dispatchers.IO) {
-        val suffix = profileId?.let { "?profileId=${enc(it)}" } ?: ""
+    suspend fun liveStreams(channelId: String, profileId: String? = null, playbackId: String? = null): List<StreamSource> = withContext(Dispatchers.IO) {
+        val suffix = listOfNotNull(
+            profileId?.let { "profileId=${enc(it)}" },
+            playbackId?.let { "playbackId=${enc(it)}" },
+        ).joinToString("&").takeIf { it.isNotEmpty() }?.let { "?$it" } ?: ""
         val body = get("/api/livetv/stream/${enc(channelId)}$suffix")
         val values = body.optJSONArray("streams") ?: JSONArray()
         List(values.length()) {
