@@ -110,6 +110,7 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -1810,7 +1811,6 @@ internal fun LiveScreen(
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(null) }
     val restoreFocus = remember(focusedChannelId) { FocusRequester() }
     val categoryRequesters = remember(categories) { List(categories.size) { FocusRequester() } }
-    val firstCategory = categoryRequesters.firstOrNull()
 
     LaunchedEffect(focusedChannelId, filteredChannels) {
         val target = focusedChannelId
@@ -1826,7 +1826,10 @@ internal fun LiveScreen(
             focusChannelsAfterCategoryChange = false
         }
     }
-    FocusFirstWhenReady(categories.isNotEmpty() && !focusChannelsAfterCategoryChange, firstCategory ?: firstChannel)
+    FocusFirstWhenReady(
+        categories.isNotEmpty() && focusedChannelId == null && !focusChannelsAfterCategoryChange,
+        categoryRequesters.getOrNull(activeCategoryIndex) ?: firstChannel,
+    )
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
@@ -2336,7 +2339,17 @@ internal fun PlayerScreen(
         val headers = if (cookie.isNullOrBlank()) emptyMap() else mapOf("Cookie" to cookie)
         val dataSourceFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
+        val loadControl = if (source.contains("/api/livetv/xtream/") && source.contains(".remux.ts")) {
+            // Xtream remux sessions replay a rolling ten-second history to every
+            // viewer, including viewers joining an already-running channel.
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(10_000, 30_000, 1_000, 2_000)
+                .build()
+        } else {
+            DefaultLoadControl.Builder().build()
+        }
         ExoPlayer.Builder(context)
+            .setLoadControl(loadControl)
             .setTrackSelector(trackSelector)
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
