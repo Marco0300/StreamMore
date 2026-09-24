@@ -317,6 +317,8 @@ class StreammoreApi(
                 name = item.optString("name", "Channel"),
                 genre = item.optString("genre", "Entertainment"),
                 country = item.optString("country", "International"),
+                nowPlaying = item.optJSONObject("nowPlaying")?.toLiveProgram(),
+                nextPlaying = item.optJSONObject("nextPlaying")?.toLiveProgram(),
             )
         }
     }

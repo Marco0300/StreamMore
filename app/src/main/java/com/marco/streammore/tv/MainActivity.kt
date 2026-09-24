@@ -235,6 +235,7 @@ internal sealed interface TvScreen {
         val year: String? = null,
         val audioSource: String? = null,
         val playbackId: String? = null,
+        val liveProgramTitle: String? = null,
     ) : TvScreen
 }
 
@@ -497,7 +498,7 @@ internal fun StreammoreTvApp() {
         playerReturn = screen
         error = null; loading = true
         runCatching { api.liveStreams(channel.channelId, id, playbackId).firstOrNull() ?: error("This channel is temporarily unavailable") }
-            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId) }
+            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId, liveProgramTitle = channel.nowPlaying?.title) }
             .onFailure { error = it.message ?: "This channel is temporarily unavailable" }
         loading = false
     }
@@ -824,10 +825,12 @@ internal fun StreammoreTvApp() {
                                 )
                             }
                         },
-                    ) {
-                        screen = playerReturn ?: TvScreen.Home
-                        playerReturn = null
-                    }
+                        onBack = {
+                            screen = playerReturn ?: TvScreen.Home
+                            playerReturn = null
+                        },
+                        liveProgramTitle = current.liveProgramTitle,
+                    )
                 }
                 }
                 if (loading && screen !is TvScreen.Player) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Purple)
@@ -1921,6 +1924,9 @@ internal fun LiveScreen(
                             Text("📺", fontSize = 26.sp)
                             Spacer(Modifier.height(4.dp))
                             Text(channel.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            channel.nowPlaying?.title?.takeIf { it.isNotBlank() }?.let { programme ->
+                                Text(programme, color = Purple, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
                             Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
@@ -2292,6 +2298,7 @@ internal fun PlayerScreen(
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
+    liveProgramTitle: String? = null,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -2669,6 +2676,10 @@ internal fun PlayerScreen(
                             Text(skipLabel!!, color = TextPrimary, fontSize = 14.sp)
                         }
                     }
+                    Spacer(Modifier.height(8.dp))
+                }
+                liveProgramTitle?.takeIf { it.isNotBlank() }?.let {
+                    Text("ON NOW · $it", color = Purple, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(8.dp))
                 }
                 if (playbackDuration > 0L) {

@@ -181,7 +181,32 @@ data class LiveChannel(
     val name: String,
     val genre: String,
     val country: String,
+    val nowPlaying: LiveProgram? = null,
+    val nextPlaying: LiveProgram? = null,
 )
+
+data class LiveProgram(
+    val id: String,
+    val title: String,
+    val description: String? = null,
+    val startMs: Long,
+    val endMs: Long,
+    val isLive: Boolean = false,
+)
+
+internal fun JSONObject.toLiveProgram(): LiveProgram? {
+    val start = optLong("startMs", 0L)
+    val end = optLong("endMs", 0L)
+    if (start <= 0L || end <= start) return null
+    return LiveProgram(
+        id = optString("id"),
+        title = optString("title", "Untitled programme"),
+        description = optString("description").takeIf { it.isNotBlank() },
+        startMs = start,
+        endMs = end,
+        isLive = optBoolean("isLive", false),
+    )
+}
 
 data class LiveSchedule(
     val available: Boolean = false,
