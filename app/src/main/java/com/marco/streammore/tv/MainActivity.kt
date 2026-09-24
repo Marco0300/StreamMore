@@ -1792,10 +1792,12 @@ internal fun LiveScreen(
 ) {
     var search by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("All") }
+    var focusChannelsAfterCategoryChange by rememberSaveable { mutableStateOf(false) }
     val categories = remember(channels) {
         listOf("All") + channels.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
     }
     val activeCategory = selectedCategory.takeIf { it in categories } ?: "All"
+    val activeCategoryIndex = categories.indexOf(activeCategory).coerceAtLeast(0)
     val filteredChannels = channels.filter { channel ->
         val matchesCategory = activeCategory == "All" || channel.genre == activeCategory
         val needle = search.trim()
@@ -1807,6 +1809,9 @@ internal fun LiveScreen(
     val gridState = rememberLazyGridState()
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(null) }
     val restoreFocus = remember(focusedChannelId) { FocusRequester() }
+    val categoryRequesters = remember(categories) { List(categories.size) { FocusRequester() } }
+    val firstCategory = categoryRequesters.firstOrNull()
+
     LaunchedEffect(focusedChannelId, filteredChannels) {
         val target = focusedChannelId
         if (target != null && filteredChannels.any { it.channelId == target }) {
@@ -1814,7 +1819,14 @@ internal fun LiveScreen(
             runCatching { restoreFocus.requestFocus() }
         }
     }
-    FocusFirstWhenReady(filteredChannels.isNotEmpty() && focusedChannelId == null, firstChannel)
+    LaunchedEffect(focusChannelsAfterCategoryChange, filteredChannels) {
+        if (focusChannelsAfterCategoryChange) {
+            withFrameNanos { }
+            runCatching { firstChannel.requestFocus() }
+            focusChannelsAfterCategoryChange = false
+        }
+    }
+    FocusFirstWhenReady(categories.isNotEmpty() && !focusChannelsAfterCategoryChange, firstCategory ?: firstChannel)
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
@@ -1823,52 +1835,92 @@ internal fun LiveScreen(
             TvButton(onRefresh) { Text("Refresh", color = TextPrimary) }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth().weight(1f).padding(top = 12.dp),
+            verticalAlignment = Alignment.Top,
         ) {
-            OutlinedTextField(
-                value = search,
-                onValueChange = { search = it },
-                singleLine = true,
-                label = { Text("Search channels") },
-                modifier = Modifier.width(360.dp),
-            )
-            Text("${filteredChannels.size} channels", color = Muted, fontSize = 13.sp)
-        }
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            items(categories) { category ->
-                TvButton(onClick = { selectedCategory = category }, selected = category == activeCategory) {
-                    Text(category, color = TextPrimary, fontSize = 13.sp)
+            // The category rail is deliberately outside the channel grid. This
+            // gives the TV focus system a stable left-side destination regardless
+            // of the channel row/column currently selected.
+            Column(
+                modifier = Modifier.width(220.dp).fillMaxSize().padding(end = 18.dp),
+            ) {
+                Text("Categories", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize().padding(top = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(bottom = 16.dp),
+                ) {
+                    itemsIndexed(categories) { index, category ->
+                        TvButton(
+                            onClick = {
+                                selectedCategory = category
+                                focusedChannelId = null
+                                focusChannelsAfterCategoryChange = true
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(categoryRequesters[index]),
+                            selected = category == activeCategory,
+                        ) {
+                            Text(category, color = TextPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
-        }
-        error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp)) }
-        if (filteredChannels.isEmpty()) {
-            Text("No channels match this search or category.", color = Muted, modifier = Modifier.padding(top = 20.dp))
-        }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 168.dp),
-            state = gridState,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            itemsIndexed(filteredChannels) { index, channel ->
-                val tileModifier = when {
-                    channel.channelId == focusedChannelId -> Modifier.height(116.dp).focusRequester(restoreFocus)
-                    index == 0 -> Modifier.height(116.dp).focusRequester(firstChannel)
-                    else -> Modifier.height(116.dp)
-                }.onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
-                TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
-                    Text("📺", fontSize = 26.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text(channel.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    OutlinedTextField(
+                        value = search,
+                        onValueChange = { search = it },
+                        singleLine = true,
+                        label = { Text("Search channels") },
+                        modifier = Modifier.width(360.dp),
+                    )
+                    Text("${filteredChannels.size} channels", color = Muted, fontSize = 13.sp)
+                }
+                error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp)) }
+                if (filteredChannels.isEmpty()) {
+                    Text("No channels match this search or category.", color = Muted, modifier = Modifier.padding(top = 20.dp))
+                }
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 168.dp),
+                    state = gridState,
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    itemsIndexed(filteredChannels) { index, channel ->
+                        val tileModifier = when {
+                            channel.channelId == focusedChannelId -> Modifier.height(116.dp).focusRequester(restoreFocus)
+                            index == 0 -> Modifier.height(116.dp).focusRequester(firstChannel)
+                            else -> Modifier.height(116.dp)
+                        }
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
+                                // Allow normal left movement within a row. Once the
+                                // focused tile is at the grid's left edge, route
+                                // left explicitly to the active category.
+                                val item = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == index }
+                                val leftEdge = item != null && item.offset.x <= (gridState.layoutInfo.visibleItemsInfo.minOfOrNull { it.offset.x } ?: item.offset.x) + 8
+                                if (leftEdge) {
+                                    runCatching { categoryRequesters[activeCategoryIndex].requestFocus() }
+                                    true
+                                } else false
+                            }
+                            .onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
+                        TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
+                            Text("📺", fontSize = 26.sp)
+                            Spacer(Modifier.height(4.dp))
+                            Text(channel.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
