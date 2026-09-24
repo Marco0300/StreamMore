@@ -354,6 +354,22 @@ class StreammoreApi(
         )
     }
 
+    suspend fun liveHeartbeat(profileId: String, channelId: String, title: String, channelMeta: String, playbackId: String) {
+        post("/api/watching", JSONObject().apply {
+            put("profileId", profileId)
+            put("mediaType", "live")
+            put("channelId", channelId)
+            put("title", title)
+            put("channelMeta", channelMeta)
+            put("playbackId", playbackId)
+            put("client", "Streammore TV")
+        })
+    }
+
+    suspend fun clearWatching(profileId: String, playbackId: String) {
+        request("DELETE", "/api/watching?profileId=${enc(profileId)}&playbackId=${enc(playbackId)}", null)
+    }
+
     suspend fun liveStreams(channelId: String, profileId: String? = null, playbackId: String? = null): List<StreamSource> = withContext(Dispatchers.IO) {
         val suffix = listOfNotNull(
             profileId?.let { "profileId=${enc(it)}" },

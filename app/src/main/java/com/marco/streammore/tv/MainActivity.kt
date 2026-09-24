@@ -119,6 +119,8 @@ import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import androidx.compose.runtime.snapshotFlow
 
@@ -236,6 +238,7 @@ internal sealed interface TvScreen {
         val audioSource: String? = null,
         val playbackId: String? = null,
         val liveProgramTitle: String? = null,
+        val liveChannelId: String? = null,
     ) : TvScreen
 }
 
@@ -302,6 +305,25 @@ internal fun StreammoreTvApp() {
         if (error != null) {
             delay(5_000)
             error = null
+        }
+    }
+
+    LaunchedEffect(screen, profileId) {
+        val player = screen as? TvScreen.Player ?: return@LaunchedEffect
+        val channelId = player.liveChannelId ?: return@LaunchedEffect
+        val profile = profileId ?: return@LaunchedEffect
+        val playbackId = player.playbackId ?: return@LaunchedEffect
+        try {
+            while (true) {
+                runCatching {
+                    api.liveHeartbeat(profile, channelId, player.title, "Africa · International", playbackId)
+                }
+                delay(10_000)
+            }
+        } finally {
+            withContext(NonCancellable) {
+                runCatching { api.clearWatching(profile, playbackId) }
+            }
         }
     }
 
@@ -498,7 +520,7 @@ internal fun StreammoreTvApp() {
         playerReturn = screen
         error = null; loading = true
         runCatching { api.liveStreams(channel.channelId, id, playbackId).firstOrNull() ?: error("This channel is temporarily unavailable") }
-            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId, liveProgramTitle = channel.nowPlaying?.title) }
+            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId, liveProgramTitle = channel.nowPlaying?.title, liveChannelId = channel.channelId) }
             .onFailure { error = it.message ?: "This channel is temporarily unavailable" }
         loading = false
     }
