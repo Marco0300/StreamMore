@@ -123,6 +123,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.collect
 import androidx.compose.runtime.snapshotFlow
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 
 // ── Palette ──────────────────────────────────────────────────────────────────
 //
@@ -207,6 +210,11 @@ internal fun formatPlayerTime(milliseconds: Long): String {
     else "%d:%02d".format(minutes, seconds)
 }
 
+internal fun formatLiveProgrammeTime(milliseconds: Long): String =
+    DateTimeFormatter.ofPattern("HH:mm")
+        .withZone(ZoneId.of("Africa/Johannesburg"))
+        .format(Instant.ofEpochMilli(milliseconds))
+
 internal sealed interface TvScreen {
     data object Login : TvScreen
     data object Profiles : TvScreen
@@ -238,6 +246,8 @@ internal sealed interface TvScreen {
         val audioSource: String? = null,
         val playbackId: String? = null,
         val liveProgramTitle: String? = null,
+        val liveNextProgramTitle: String? = null,
+        val liveNextProgramStartMs: Long? = null,
         val liveChannelId: String? = null,
     ) : TvScreen
 }
@@ -520,7 +530,17 @@ internal fun StreammoreTvApp() {
         playerReturn = screen
         error = null; loading = true
         runCatching { api.liveStreams(channel.channelId, id, playbackId).firstOrNull() ?: error("This channel is temporarily unavailable") }
-            .onSuccess { screen = TvScreen.Player(it.url, channel.name, playbackId = playbackId, liveProgramTitle = channel.nowPlaying?.title, liveChannelId = channel.channelId) }
+            .onSuccess {
+                screen = TvScreen.Player(
+                    it.url,
+                    channel.name,
+                    playbackId = playbackId,
+                    liveProgramTitle = channel.nowPlaying?.title,
+                    liveNextProgramTitle = channel.nextPlaying?.title,
+                    liveNextProgramStartMs = channel.nextPlaying?.startMs,
+                    liveChannelId = channel.channelId,
+                )
+            }
             .onFailure { error = it.message ?: "This channel is temporarily unavailable" }
         loading = false
     }
@@ -852,6 +872,8 @@ internal fun StreammoreTvApp() {
                             playerReturn = null
                         },
                         liveProgramTitle = current.liveProgramTitle,
+                        liveNextProgramTitle = current.liveNextProgramTitle,
+                        liveNextProgramStartMs = current.liveNextProgramStartMs,
                     )
                 }
                 }
@@ -2321,6 +2343,8 @@ internal fun PlayerScreen(
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
     onBack: () -> Unit,
     liveProgramTitle: String? = null,
+    liveNextProgramTitle: String? = null,
+    liveNextProgramStartMs: Long? = null,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -2702,6 +2726,17 @@ internal fun PlayerScreen(
                 }
                 liveProgramTitle?.takeIf { it.isNotBlank() }?.let {
                     Text("ON NOW · $it", color = Purple, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(4.dp))
+                }
+                liveNextProgramTitle?.takeIf { it.isNotBlank() }?.let { next ->
+                    val scheduled = liveNextProgramStartMs?.let(::formatLiveProgrammeTime)
+                    Text(
+                        "UP NEXT · $next${scheduled?.let { " · $it" } ?: ""}",
+                        color = Muted,
+                        fontSize = 13.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                     Spacer(Modifier.height(8.dp))
                 }
                 if (playbackDuration > 0L) {
