@@ -54,14 +54,23 @@ jobs:
         env:
           TAG_NAME: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk" || { echo 'Android SDK location is unknown'; exit 1; }
+          aapt="$(find "$sdk/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -1)"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
+          test -x "$aapt" || { echo "aapt not found under $sdk/build-tools"; exit 1; }
+          test -x "$apksigner" || { echo "apksigner not found under $sdk/build-tools"; exit 1; }
           tag_version="${TAG_NAME#mobile-v}"
           apk='mobile/app/build/outputs/apk/release/app-release.apk'
-          apk_version="$(aapt dump badging "$apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")"
-          test "$tag_version" = "$apk_version" || {
+          test -f "$apk" || { echo "Release APK is missing: $apk"; exit 1; }
+          apk_version="$("$aapt" dump badging "$apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)"
+          test -n "$apk_version" || { echo 'Could not read versionName from the APK'; exit 1; }
+          if [ "$tag_version" != "$apk_version" ]; then
             echo "Tag version $tag_version does not match APK version $apk_version"
             exit 1
-          }
-          apksigner verify --verbose "$apk"
+          fi
+          "$apksigner" verify --verbose "$apk"
           asset="mobile/Streammore-Mobile-${apk_version}-release.apk"
           cp "$apk" "$asset"
           digest="$(sha256sum "$asset" | awk '{print $1}')"
