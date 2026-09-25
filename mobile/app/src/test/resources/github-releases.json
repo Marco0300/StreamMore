@@ -1,0 +1,62 @@
+[
+  {
+    "tag_name": "mobile-v1.0.5",
+    "name": "Streammore Mobile v1.0.5",
+    "draft": false,
+    "prerelease": false,
+    "body": "Streammore Mobile v1.0.5\n\nSHA-256: `8b13f0ca3e230d867631cd058d634a708aaab9b91890e94324284aa3accdc93d`\n\n\n**Full Changelog**: https://github.com/Marco0300/StreamMore/compare/v1.17.0...mobile-v1.0.5",
+    "assets": [
+      {
+        "name": "Streammore-Mobile-1.0.5-release.apk",
+        "size": 12041225,
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/mobile-v1.0.5/Streammore-Mobile-1.0.5-release.apk",
+        "digest": "sha256:8b13f0ca3e230d867631cd058d634a708aaab9b91890e94324284aa3accdc93d"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.17.0",
+    "name": "Streammore TV v1.17.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "Shows the next scheduled Live TV programme and its Africa/Johannesburg time next to ON NOW in the native Android TV playback screen.",
+    "assets": [
+      {
+        "name": "Streammore-TV-v1.17.0-release.apk",
+        "size": 12041177,
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/v1.17.0/Streammore-TV-v1.17.0-release.apk",
+        "digest": "sha256:821595b276acf4b404a5e80f6d2bf023003bce5f1aaeb4272cf1f64bd7f43ca6"
+      }
+    ]
+  },
+  {
+    "tag_name": "mobile-v2.0.0",
+    "name": "Streammore Mobile v1.0.5",
+    "draft": false,
+    "prerelease": true,
+    "body": "Streammore Mobile v1.0.5\n\nSHA-256: `8b13f0ca3e230d867631cd058d634a708aaab9b91890e94324284aa3accdc93d`\n\n\n**Full Changelog**: https://github.com/Marco0300/StreamMore/compare/v1.17.0...mobile-v1.0.5",
+    "assets": [
+      {
+        "name": "Streammore-Mobile-2.0.0-release.apk",
+        "size": 12041225,
+        "browser_download_url": "https://example.invalid/prerelease.apk",
+        "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      }
+    ]
+  },
+  {
+    "tag_name": "mobile-v3.0.0",
+    "name": "Streammore Mobile v1.0.5",
+    "draft": true,
+    "prerelease": false,
+    "body": "Streammore Mobile v1.0.5\n\nSHA-256: `8b13f0ca3e230d867631cd058d634a708aaab9b91890e94324284aa3accdc93d`\n\n\n**Full Changelog**: https://github.com/Marco0300/StreamMore/compare/v1.17.0...mobile-v1.0.5",
+    "assets": [
+      {
+        "name": "Streammore-Mobile-3.0.0-release.apk",
+        "size": 12041225,
+        "browser_download_url": "https://example.invalid/draft.apk",
+        "digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    ]
+  }
+]

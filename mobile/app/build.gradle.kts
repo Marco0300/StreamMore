@@ -11,8 +11,8 @@ android {
         applicationId = "com.marco.streammore.mobile"
         minSdk = 26
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.5"
+        versionCode = 7
+        versionName = "1.0.6"
     }
 
     val releaseKeystore = System.getenv("STREAMMORE_RELEASE_KEYSTORE")
@@ -95,6 +95,7 @@ dependencies {
     // JVM-side Compose screenshot harness (no emulator / KVM required)
     testImplementation(composeBom)
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
     testImplementation("org.robolectric:robolectric:4.17")
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")

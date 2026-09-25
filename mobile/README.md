@@ -42,7 +42,7 @@ stored outside the repository. The keystore must be preserved for future updates
 The current release artifact is:
 
 ```text
-Streammore-Mobile-v1.0.5-release.apk
+Streammore-Mobile-v1.0.6-release.apk
 ```
 
 If the signing environment is not already loaded, source the private local signing

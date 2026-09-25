@@ -68,6 +68,33 @@ internal fun isNewerVersion(latest: String, current: String): Boolean =
         it.first > it.second
     } ?: false
 
+internal fun parseMobileReleaseCandidates(payload: String): List<MobileReleaseCandidate> {
+    val releases = JSONArray(payload)
+    return buildList {
+        for (index in 0 until releases.length()) {
+            val release = releases.optJSONObject(index) ?: continue
+            val assets = release.optJSONArray("assets") ?: continue
+            val apk = (0 until assets.length())
+                .mapNotNull { assets.optJSONObject(it) }
+                .firstOrNull { isMobileApkAsset(it.optString("name")) }
+                ?: continue
+            val version = normalizeMobileReleaseVersion(release.optString("tag_name"))
+            if (version.isBlank()) continue
+            add(
+                MobileReleaseCandidate(
+                    versionName = version,
+                    assetName = apk.optString("name"),
+                    downloadUrl = apk.optString("browser_download_url"),
+                    sha256 = apk.optString("digest").removePrefix("sha256:").ifBlank { null },
+                    releaseNotes = release.optString("body").trim(),
+                    draft = release.optBoolean("draft"),
+                    prerelease = release.optBoolean("prerelease"),
+                ),
+            )
+        }
+    }
+}
+
 internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.IO) {
     val connection = (URL(GITHUB_RELEASES_URL).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
@@ -81,30 +108,8 @@ internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.I
         if (connection.responseCode !in 200..299) {
             throw IllegalStateException("GitHub update check failed (${connection.responseCode})")
         }
-        val releases = JSONArray(connection.inputStream.bufferedReader().use { it.readText() })
-        val candidates = buildList {
-            for (index in 0 until releases.length()) {
-                val release = releases.optJSONObject(index) ?: continue
-                val assets = release.optJSONArray("assets") ?: continue
-                val apk = (0 until assets.length())
-                    .mapNotNull { assets.optJSONObject(it) }
-                    .firstOrNull { isMobileApkAsset(it.optString("name")) }
-                    ?: continue
-                val version = normalizeMobileReleaseVersion(release.optString("tag_name"))
-                if (version.isBlank()) continue
-                add(
-                    MobileReleaseCandidate(
-                        versionName = version,
-                        assetName = apk.optString("name"),
-                        downloadUrl = apk.optString("browser_download_url"),
-                        sha256 = apk.optString("digest").removePrefix("sha256:").ifBlank { null },
-                        releaseNotes = release.optString("body").trim(),
-                        draft = release.optBoolean("draft"),
-                        prerelease = release.optBoolean("prerelease"),
-                    ),
-                )
-            }
-        }
+        val payload = connection.inputStream.bufferedReader().use { it.readText() }
+        val candidates = parseMobileReleaseCandidates(payload)
         val release = selectLatestMobileRelease(candidates) ?: return@withContext null
         if (!isNewerVersion(release.versionName, BuildConfig.VERSION_NAME)) return@withContext null
         if (release.downloadUrl.isBlank()) return@withContext null
