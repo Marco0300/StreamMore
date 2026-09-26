@@ -301,6 +301,9 @@ internal fun StreammoreTvApp() {
     var activity by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
+    // A failed next-episode resolve happens while the player is on screen, where
+    // the general error banner is suppressed, so it carries its own message.
+    var nextEpisodeError by remember { mutableStateOf<String?>(null) }
     var availableUpdate by remember { mutableStateOf<AppUpdate?>(null) }
     var updateDismissed by remember { mutableStateOf(false) }
     var updateBusy by remember { mutableStateOf(false) }
@@ -463,37 +466,66 @@ internal fun StreammoreTvApp() {
         poster: String? = null,
         backdrop: String? = null,
         year: String? = null,
+        retries: Int = 0,
     ) = scope.launch {
         val id = profileId ?: return@launch
         val playbackId = "${System.currentTimeMillis()}-${mediaType}-${tmdbId}"
+        val startedFromPlayer = screen is TvScreen.Player
         error = null
-        playerReturn = if (screen is TvScreen.Player) playerReturn else screen
+        nextEpisodeError = null
+        playerReturn = if (startedFromPlayer) playerReturn else screen
         loading = true
-        runCatching {
-            val sources = api.streams(mediaType, tmdbId, id, playbackId, season, episode)
-            val source = sources.firstOrNull()
-                ?: error("No playable sources were found")
-            val tvSource = source.tvUrl()
-            val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
-            TvScreen.Player(
-                tvSource,
-                title,
-                subs,
-                nextEpisode?.copy(tmdbId = tmdbId),
-                mediaType,
-                tmdbId,
-                season,
-                episode,
-                initialPositionMs,
-                sources,
-                introEndSeconds,
-                recapEndSeconds,
-                poster,
-                backdrop,
-                year,
-                playbackId = playbackId,
-            )
-        }.onSuccess { screen = it }.onFailure { error = it.message ?: "Could not resolve playback" }
+        var attempt = 0
+        var resolved: TvScreen.Player? = null
+        var lastReason: String? = null
+        var lastMessage: String? = null
+        while (resolved == null) {
+            attempt += 1
+            runCatching {
+                val result = api.resolveStreams(mediaType, tmdbId, id, playbackId, season, episode)
+                val source = result.sources.firstOrNull() ?: run {
+                    lastReason = result.reason
+                    throw IllegalStateException(resolveFailureMessage(result.reason))
+                }
+                val tvSource = source.tvUrl()
+                val subs = runCatching { api.subtitles(mediaType, tmdbId, season, episode) }.getOrDefault(emptyList())
+                TvScreen.Player(
+                    tvSource,
+                    title,
+                    subs,
+                    nextEpisode?.copy(tmdbId = tmdbId),
+                    mediaType,
+                    tmdbId,
+                    season,
+                    episode,
+                    initialPositionMs,
+                    result.sources,
+                    introEndSeconds,
+                    recapEndSeconds,
+                    poster,
+                    backdrop,
+                    year,
+                    playbackId = playbackId,
+                )
+            }.onSuccess { resolved = it }
+                .onFailure { lastMessage = it.message ?: "Could not resolve playback" }
+            // Exhausted Xtream capacity clears within seconds of the previous
+            // episode releasing its connection, so an advancing episode gets a
+            // couple of spaced retries instead of failing once and going silent.
+            val canRetry = resolved == null && attempt <= retries && isRetryableResolveReason(lastReason)
+            if (!canRetry) break
+            delay(1_500L * attempt)
+        }
+        val finished = resolved
+        if (finished != null) {
+            nextEpisodeError = null
+            screen = finished
+        } else if (startedFromPlayer) {
+            // The player keeps its surface, so the failure has to be actionable there.
+            nextEpisodeError = lastMessage ?: "Could not start the next episode"
+        } else {
+            error = lastMessage ?: "Could not resolve playback"
+        }
         loading = false
     }
     fun playTrailer(mediaType: String, tmdbId: Int, title: String) = scope.launch {
@@ -807,7 +839,7 @@ internal fun StreammoreTvApp() {
                         },
                         { selectedEpisode ->
                             if (current.season != null) {
-                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number, detail?.seasons.orEmpty()), selectedEpisode.positionMs, poster = current.poster, backdrop = current.backdrop, year = current.year)
+                                play("tv", current.tmdbId ?: 0, current.title, current.season, selectedEpisode.number, nextEpisodeAfter(episodes, current.season, selectedEpisode.number, detail?.seasons.orEmpty()), selectedEpisode.positionMs, poster = current.poster, backdrop = current.backdrop, year = current.year, retries = 2)
                             }
                         },
                         current.initialPositionMs,
@@ -864,16 +896,21 @@ internal fun StreammoreTvApp() {
                                     poster = current.poster,
                                     backdrop = current.backdrop,
                                     year = current.year,
+                                    // Advancing right after an episode ends is when
+                                    // Xtream accounts are most likely to be full.
+                                    retries = 2,
                                 )
                             }
                         },
                         onBack = {
                             screen = playerReturn ?: TvScreen.Home
                             playerReturn = null
+                            nextEpisodeError = null
                         },
                         liveProgramTitle = current.liveProgramTitle,
                         liveNextProgramTitle = current.liveNextProgramTitle,
                         liveNextProgramStartMs = current.liveNextProgramStartMs,
+                        nextEpisodeError = nextEpisodeError,
                     )
                 }
                 }
@@ -2345,6 +2382,7 @@ internal fun PlayerScreen(
     liveProgramTitle: String? = null,
     liveNextProgramTitle: String? = null,
     liveNextProgramStartMs: Long? = null,
+    nextEpisodeError: String? = null,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -2371,6 +2409,15 @@ internal fun PlayerScreen(
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
     var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
     var nextStarted by remember(source, nextEpisode) { mutableStateOf(false) }
+    // The last known position of a finished episode. player.stop() releases the
+    // upstream connection but must never let a later progress write slip back to 0.
+    var finishingPositionMs by remember(source) { mutableStateOf(0L) }
+    // Set by the player listener when the episode ends, either cleanly or because
+    // the provider closed the file early.
+    var endOfMediaReached by remember(source) { mutableStateOf(false) }
+    // True when that end came from an early provider close rather than STATE_ENDED,
+    // so the auto-next preference can still be honoured.
+    var endOfMediaError by remember(source) { mutableStateOf(false) }
     var nextActionFocused by remember(source, nextEpisode) { mutableStateOf("play") }
     var playbackPosition by remember(source) { mutableStateOf(0L) }
     var playbackDuration by remember(source) { mutableStateOf(0L) }
@@ -2385,7 +2432,16 @@ internal fun PlayerScreen(
     val playFocus = remember(source) { FocusRequester() }
     val seekFocus = remember(source) { FocusRequester() }
     val episodeFocus = remember(source) { FocusRequester() }
-    val trackSelector = remember(source, audioSource) { DefaultTrackSelector(context) }
+    val trackSelector = remember(source, audioSource) {
+        DefaultTrackSelector(context).apply {
+            // Xtream MKV files may list Russian/Ukrainian before English. Prefer
+            // English automatically while leaving the other tracks available to
+            // Media3's track selector.
+            parameters = buildUponParameters()
+                .setPreferredAudioLanguage("en")
+                .build()
+        }
+    }
     val player = remember(source, audioSource, trackSelector) {
         // Subtitle files come from the authenticated /api/subtitles/file route, so
         // ExoPlayer's own requests have to carry the session cookie.
@@ -2407,11 +2463,26 @@ internal fun PlayerScreen(
             .setMediaSourceFactory(mediaSourceFactory)
             .build()
             .apply {
+                // The listener cannot reference the `player` val that this block
+                // produces, so it captures the instance being configured instead.
+                val self = this
                 addListener(object : Player.Listener {
                     override fun onTracksChanged(tracks: Tracks) {
                         availableQualities = availableVideoQualities(tracks)
                     }
                     override fun onPlayerError(error: PlaybackException) {
+                        val duration = self.duration.takeIf { it > 0L } ?: playbackDuration
+                        val position = self.currentPosition.coerceAtLeast(0L)
+                        if (isEndOfMediaFailure(error.errorCode, position, duration)) {
+                            // Xtream hosts close a finished MKV a few seconds early and
+                            // Media3 reports that as a network/container error. Treating
+                            // it as a failure leaves the viewer on a stuck countdown, so
+                            // it counts as the episode ending instead.
+                            Log.w("StreammorePlayer", "playback ended early at ${position}ms of ${duration}ms (${error.errorCodeName})")
+                            endOfMediaError = true
+                            endOfMediaReached = true
+                            return
+                        }
                         playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
                         Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
                     }
@@ -2448,6 +2519,53 @@ internal fun PlayerScreen(
         withFrameNanos { }
         delay(150)
         runCatching { playerFocus.requestFocus() }
+    }
+
+    // Every advance to the next episode goes through here. The player is stopped
+    // first so this episode's Xtream connection is released before the next source
+    // is resolved: these accounts are commonly max_connections=1 and the account
+    // carrying the episode that just finished is usually also a candidate for the
+    // next one, so resolving while it is still held fails with
+    // all-accounts-at-capacity and the next episode never starts.
+    fun handOffToNext(next: NextEpisodeInfo) {
+        if (nextStarted) return
+        nextStarted = true
+        nextPromptVisible = false
+        val duration = player.duration.takeIf { it > 0L } ?: playbackDuration
+        val position = player.currentPosition.coerceAtLeast(0L)
+        if (duration > 0L) {
+            finishingPositionMs = maxOf(finishingPositionMs, position)
+            onProgress(position, duration)
+        }
+        runCatching { player.stop() }
+        onPlayNext(next)
+    }
+
+    // The prompt's Play action also serves as the retry after a failed resolve.
+    fun requestNextEpisode() {
+        val next = nextEpisode ?: return
+        if (nextEpisodeError != null) nextStarted = false
+        handOffToNext(next)
+    }
+
+    LaunchedEffect(endOfMediaReached, endOfMediaError, nextEpisode, nextPromptDismissed, autoNextEnabled) {
+        val next = nextEpisode ?: return@LaunchedEffect
+        if (!endOfMediaReached || nextPromptDismissed) return@LaunchedEffect
+        // An early close is only auto-advanced when the viewer left auto-next on;
+        // otherwise the prompt offers the next episode instead.
+        if (endOfMediaError && !autoNextEnabled) {
+            nextPromptVisible = true
+            return@LaunchedEffect
+        }
+        handOffToNext(next)
+    }
+
+    // A failure to start the next episode must be visible even when the prompt was
+    // not on screen yet, because that failure is what leaves the viewer stuck.
+    LaunchedEffect(nextEpisodeError) {
+        if (nextEpisodeError != null && nextEpisode != null && !nextPromptDismissed) {
+            nextPromptVisible = true
+        }
     }
 
     fun applyQuality(quality: AvailableVideoQuality?) {
@@ -2500,8 +2618,7 @@ internal fun PlayerScreen(
                 countdownSeconds = ((remaining + 999) / 1_000).toInt()
                 nextPromptVisible = true
                 if (remaining <= 0 && autoNextEnabled && !nextStarted) {
-                    nextStarted = true
-                    onPlayNext(nextEpisode)
+                    handOffToNext(nextEpisode)
                     break
                 }
             }
@@ -2568,8 +2685,9 @@ internal fun PlayerScreen(
         while (true) {
             delay(10_000)
             val duration = player.duration
-            if (duration > 0L && player.currentPosition >= 0L) {
-                onProgress(player.currentPosition, duration)
+            val position = maxOf(player.currentPosition, finishingPositionMs)
+            if (duration > 0L && position > 0L) {
+                onProgress(position, duration)
             }
         }
     }
@@ -2589,17 +2707,21 @@ internal fun PlayerScreen(
     DisposableEffect(player, nextEpisode) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                // The hand-off (releasing this stream before resolving the next
+                // episode) runs in composition, where it can reach the player.
                 if (playbackState == Player.STATE_ENDED && nextEpisode != null && !nextPromptDismissed && !nextStarted) {
-                    nextStarted = true
-                    onPlayNext(nextEpisode)
+                    endOfMediaReached = true
                 }
             }
         }
         player.addListener(listener)
         onDispose {
             val duration = player.duration
-            if (duration > 0L && player.currentPosition >= 0L) {
-                onProgress(player.currentPosition, duration)
+            // A finished episode has been handed off, which stops the player: fall
+            // back to the position captured then so progress cannot regress to 0.
+            val position = maxOf(player.currentPosition, finishingPositionMs)
+            if (duration > 0L && position > 0L) {
+                onProgress(position, duration)
             }
             player.removeListener(listener)
             player.release()
@@ -2638,9 +2760,8 @@ internal fun PlayerScreen(
                     if (nextActionFocused == "close") {
                         nextPromptDismissed = true
                         nextPromptVisible = false
-                    } else if (!nextStarted) {
-                        nextStarted = true
-                        onPlayNext(nextEpisode)
+                    } else {
+                        requestNextEpisode()
                     }
                     true
                 } else if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
@@ -2932,15 +3053,16 @@ internal fun PlayerScreen(
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("UP NEXT", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
                     Text("${nextEpisode.season}x${nextEpisode.episode}  ${nextEpisode.title}", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("Playing next in ${countdownSeconds.coerceAtLeast(0)}…", color = Muted, fontSize = 14.sp)
+                    if (nextEpisodeError != null) {
+                        // Once the resolve has failed the countdown is meaningless,
+                        // so the reason replaces it and Play next becomes the retry.
+                        Text(nextEpisodeError, color = Color(0xFFFFB4AB), fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    } else {
+                        Text("Playing next in ${countdownSeconds.coerceAtLeast(0)}…", color = Muted, fontSize = 14.sp)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TvButton(
-                            onClick = {
-                                if (!nextStarted) {
-                                    nextStarted = true
-                                    onPlayNext(nextEpisode)
-                                }
-                            },
+                            onClick = { requestNextEpisode() },
                             primary = true,
                             modifier = Modifier
                                 .focusRequester(nextFocus)

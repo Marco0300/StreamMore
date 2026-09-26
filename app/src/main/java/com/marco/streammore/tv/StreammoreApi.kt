@@ -142,6 +142,15 @@ class StreammoreApi(
     }
 
     suspend fun streams(mediaType: String, tmdbId: Int, profileId: String, playbackId: String? = null, season: Int? = null, episode: Int? = null): List<StreamSource> =
+        resolveStreams(mediaType, tmdbId, profileId, playbackId, season, episode).sources
+
+    /**
+     * /api/streams answers HTTP 200 even when nothing could be resolved, and it
+     * names the reason ("all-accounts-at-capacity", "not-indexed", …) in the body.
+     * Keeping that reason lets the player tell the viewer what to do instead of
+     * showing an empty source list with no explanation.
+     */
+    suspend fun resolveStreams(mediaType: String, tmdbId: Int, profileId: String, playbackId: String? = null, season: Int? = null, episode: Int? = null): StreamResolution =
         withContext(Dispatchers.IO) {
             val params = buildString {
                 append("mediaType=${enc(mediaType)}&tmdbId=$tmdbId&profileId=${enc(profileId)}")
@@ -151,17 +160,20 @@ class StreammoreApi(
             }
             val body = get("/api/streams?$params")
             val values = body.optJSONArray("streams") ?: JSONArray()
-            List(values.length()) {
-                val s = values.getJSONObject(it)
-                StreamSource(
-                    name = s.optString("name", "Source ${it + 1}"),
-                    quality = s.optString("quality", "Auto"),
-                    url = s.optString("url"),
-                    backend = s.optString("backend").takeIf { it.isNotBlank() },
-                    nativeUrl = s.optString("nativeUrl").takeIf { it.isNotBlank() },
-                    sourceExtension = s.optString("sourceExtension").takeIf { it.isNotBlank() },
-                )
-            }
+            StreamResolution(
+                sources = List(values.length()) {
+                    val s = values.getJSONObject(it)
+                    StreamSource(
+                        name = s.optString("name", "Source ${it + 1}"),
+                        quality = s.optString("quality", "Auto"),
+                        url = s.optString("url"),
+                        backend = s.optString("backend").takeIf { it.isNotBlank() },
+                        nativeUrl = s.optString("nativeUrl").takeIf { it.isNotBlank() },
+                        sourceExtension = s.optString("sourceExtension").takeIf { it.isNotBlank() },
+                    )
+                },
+                reason = body.optString("reason").takeIf { it.isNotBlank() && it != "null" },
+            )
         }
 
     suspend fun saveProgress(

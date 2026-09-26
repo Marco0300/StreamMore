@@ -172,6 +172,17 @@ data class StreamSource(
     fun tvUrl(): String = nativeUrl?.takeIf { it.isNotBlank() } ?: url
 }
 
+/**
+ * A source list plus the server's explanation when nothing could be resolved.
+ * The Streammore API answers 200 with an empty list for an unplayable title, so
+ * the reason is the only way to distinguish "every Xtream account is busy" from
+ * "this episode is not in the catalogue".
+ */
+data class StreamResolution(
+    val sources: List<StreamSource>,
+    val reason: String? = null,
+)
+
 
 data class SubtitleTrack(val label: String, val language: String, val url: String)
 
