@@ -14,6 +14,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -77,7 +78,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -141,6 +144,11 @@ internal val Muted = Color(0xFFBDB4CC)
 internal val TextPrimary = Color(0xFFF7F3FF)
 internal val BorderIdle = Color(0xFF493A5F)
 internal val BorderFocused = Color(0xFFFFFFFF)
+/** Focus ring for content tiles — the brand colour, so rows do not glare white. */
+internal val BrandRing = Purple
+/** How far a focused tile grows, and how far it lifts off its row. */
+private const val FocusScale = 1.09f
+private val FocusElevation = 18.dp
 internal val ErrorText = Color(0xFFFF8B90)
 internal val ErrorFill = Color(0xFF5B171B)
 internal val WarnYellow = Color(0xFFFFD54F)
@@ -196,9 +204,14 @@ internal val StreammoreScheme = darkColorScheme(
 //
 // A 1080p Android TV panel is 960x540dp at xhdpi. A 270dp-tall card is half the
 // viewport, so rows are sized to keep two full rows on screen.
-private val Gutter = 42.dp
-internal val PosterWidth = 104.dp
-internal val PosterHeight = 150.dp
+private val Gutter = 48.dp
+internal val PosterWidth = 124.dp
+internal val PosterHeight = 186.dp
+/** Space between tiles in a row or grid. */
+internal val TileGap = 16.dp
+/** Continue Watching tiles are 16:9 stills, not posters. */
+internal val StillWidth = 250.dp
+internal val StillHeight = 141.dp
 private val NavHeight = 54.dp
 
 internal fun formatPlayerTime(milliseconds: Long): String {
@@ -1001,7 +1014,7 @@ internal fun TopButton(label: String, active: Boolean, onClick: () -> Unit) {
         Text(
             label,
             color = if (active) Color.White else Muted,
-            fontSize = 14.sp,
+            fontSize = 15.sp,
             fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1,
         )
@@ -1012,7 +1025,9 @@ internal fun TopButton(label: String, active: Boolean, onClick: () -> Unit) {
 
 /**
  * A D-pad focusable tile. On a TV the focus ring *is* the pointer, so the focused
- * tile must be unmistakable: brighter border, lighter fill and a slight scale-up.
+ * tile must be unmistakable: brand-coloured ring, lighter fill, a scale-up and a
+ * real shadow that lifts it off the row. Buttons keep the white ring ([BorderFocused]);
+ * tiles use the brand ring so a screen full of tiles does not read as a wall of white.
  */
 @Composable
 internal fun TvCard(
@@ -1056,11 +1071,13 @@ internal fun TvCardSurface(
     onLongClick: (() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "focusScale")
-    val border by animateColorAsState(if (focused) BorderFocused else BorderIdle, label = "focusBorder")
+    val scale by animateFloatAsState(if (focused) FocusScale else 1f, label = "focusScale")
+    val border by animateColorAsState(if (focused) BrandRing else BorderIdle, label = "focusBorder")
+    val elevation by animateDpAsState(if (focused) FocusElevation else 0.dp, label = "focusElevation")
 
     var centerDownAt by remember { mutableStateOf<Long?>(null) }
     val cardInteractionModifier = modifier
+        .shadow(elevation, shape, clip = false)
         .graphicsLayer { scaleX = scale; scaleY = scale }
         .onPreviewKeyEvent { event ->
             if (onLongClick == null || event.key !in setOf(Key.DirectionCenter, Key.Enter)) return@onPreviewKeyEvent false
@@ -1088,7 +1105,7 @@ internal fun TvCardSurface(
         modifier = cardInteractionModifier,
         shape = shape,
         colors = CardDefaults.cardColors(containerColor = if (focused) PanelFocused else Panel),
-        border = BorderStroke(if (focused) 2.dp else 1.dp, border),
+        border = BorderStroke(if (focused) 3.dp else 1.dp, border),
     ) {
         Column(
             Modifier.padding(contentPadding).fillMaxWidth(),
@@ -1104,19 +1121,33 @@ private fun Ribbon(label: String) {
     Text(
         label,
         color = Color.White,
-        fontSize = 9.sp,
+        fontSize = 11.sp,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         modifier = Modifier
             .background(Purple)
-            .padding(horizontal = 6.dp, vertical = 3.dp),
+            .padding(horizontal = 7.dp, vertical = 4.dp),
     )
 }
 
 @Composable
 private fun WatchProgress(percent: Double) {
-    Box(Modifier.fillMaxWidth().height(3.dp).background(Color(0xFF3A3A3A))) {
-        Box(Modifier.fillMaxWidth(percent.coerceIn(0.0, 1.0).toFloat()).height(3.dp).background(Purple))
+    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
+        Box(Modifier.fillMaxWidth(percent.coerceIn(0.0, 1.0).toFloat()).height(4.dp).background(Purple))
+    }
+}
+
+/**
+ * How far through the current programme a live channel is. Read at composition
+ * time, so it advances whenever the guide refreshes rather than on its own clock.
+ */
+@Composable
+private fun ProgrammeProgress(programme: LiveProgram) {
+    val fraction = programmeProgressFraction(programme.startMs, programme.endMs, System.currentTimeMillis())
+    if (fraction <= 0.0) return
+    Spacer(Modifier.height(5.dp))
+    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
+        Box(Modifier.fillMaxWidth(fraction.toFloat()).height(4.dp).background(Purple))
     }
 }
 
@@ -1127,13 +1158,22 @@ internal fun MediaCardView(
     onClick: (MediaCard) -> Unit,
     modifier: Modifier = Modifier,
     onLongPress: (MediaCard) -> Unit = {},
+    dimmed: Boolean = false,
+    onFocusChange: ((Boolean) -> Unit)? = null,
+    // Kept last so existing call sites can still pass a trailing lambda.
     onFocus: (() -> Unit)? = null,
 ) {
-    Column(Modifier.width(PosterWidth)) {
+    Column(Modifier.width(PosterWidth).alpha(if (dimmed) 0.92f else 1f)) {
         TvCard(
             onClick = { onClick(card) },
             onLongClick = { onLongPress(card) },
-            modifier = modifier.fillMaxWidth().onFocusChanged { if (it.isFocused) onFocus?.invoke() },
+            modifier = modifier
+                .fillMaxWidth()
+                .onFocusChanged {
+                    val focused = it.isFocused || it.hasFocus
+                    if (focused) onFocus?.invoke()
+                    onFocusChange?.invoke(focused)
+                },
         ) {
             Box {
                 AsyncImage(
@@ -1146,25 +1186,94 @@ internal fun MediaCardView(
                 if (card.percent > 0.0) Box(Modifier.align(Alignment.BottomCenter)) { WatchProgress(card.percent) }
             }
         }
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(8.dp))
         Text(
             card.title,
             color = TextPrimary,
-            fontSize = 12.sp,
+            fontSize = 14.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         card.sub?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = Purple, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(it, color = Purple, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(
             listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · "),
             color = Muted,
-            fontSize = 11.sp,
+            fontSize = 12.5.sp,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+/**
+ * The Continue Watching tile: a 16:9 still rather than a poster, because the
+ * viewer is choosing between episodes, and the caption says what is left to watch
+ * instead of leaving them to guess from a 4dp bar.
+ */
+@Composable
+internal fun WideCardView(
+    card: MediaCard,
+    onClick: (MediaCard) -> Unit,
+    modifier: Modifier = Modifier,
+    onLongPress: (MediaCard) -> Unit = {},
+    onFocusChange: ((Boolean) -> Unit)? = null,
+    dimmed: Boolean = false,
+) {
+    val remaining = remainingLabel(card.positionSeconds, card.durationSeconds, card.percent)
+    val tag = if (card.season != null && card.episode != null) "S${card.season}E${card.episode}" else "FILM"
+    Column(Modifier.width(StillWidth).alpha(if (dimmed) 0.92f else 1f)) {
+        TvCard(
+            onClick = { onClick(card) },
+            onLongClick = { onLongPress(card) },
+            modifier = modifier
+                .fillMaxWidth()
+                .onFocusChanged { onFocusChange?.invoke(it.isFocused || it.hasFocus) },
+        ) {
+            Box {
+                AsyncImage(
+                    model = card.backdrop ?: card.poster,
+                    contentDescription = card.title,
+                    modifier = Modifier.fillMaxWidth().height(StillHeight),
+                    contentScale = ContentScale.Crop,
+                )
+                Text(
+                    tag,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                        .background(Color(0xCC0A0810), RoundedCornerShape(3.dp))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+                if (card.percent > 0.0) Box(Modifier.align(Alignment.BottomCenter)) { WatchProgress(card.percent) }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            card.title,
+            color = TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val secondLine = remaining ?: card.episodeTitle
+        secondLine?.takeIf { it.isNotBlank() }?.let { line ->
+            Text(
+                line,
+                color = if (remaining != null) Purple else Muted,
+                fontSize = 12.5.sp,
+                fontWeight = if (remaining != null) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -1627,6 +1736,9 @@ internal fun HomeScreen(
                 onCard = onCard,
                 onLongCard = onLongCard,
                 firstCardRequester = if (index == 0) heroPlayFocus else null,
+                // The backend marks the resume row with id "continue"; its items
+                // carry a 16:9 backdrop and a position, so they render as stills.
+                wide = row.id == "continue",
             )
         }
         Spacer(Modifier.height(16.dp))
@@ -1640,11 +1752,16 @@ internal fun RowSection(
     onCard: (MediaCard) -> Unit,
     onLongCard: (MediaCard) -> Unit = {},
     firstCardRequester: FocusRequester? = null,
+    /** Continue Watching style rows use 16:9 stills instead of posters. */
+    wide: Boolean = false,
 ) {
+    // Which tile owns focus in this row, so its siblings can step back slightly.
+    // A focused card surrounded by equally bright cards is much harder to find.
+    var focusedIndex by remember { mutableStateOf<Int?>(null) }
     Column(Modifier.padding(horizontal = Gutter)) {
-        Text(title, color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(8.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
             itemsIndexed(items) { index, item ->
                 val modifier = if (firstCardRequester != null) {
                     Modifier
@@ -1660,7 +1777,19 @@ internal fun RowSection(
                 } else {
                     Modifier
                 }
-                MediaCardView(item, onCard, modifier, onLongCard)
+                val reportFocus: (Boolean) -> Unit = { focused ->
+                    focusedIndex = when {
+                        focused -> index
+                        focusedIndex == index -> null
+                        else -> focusedIndex
+                    }
+                }
+                val dimmed = focusedIndex != null && focusedIndex != index
+                if (wide) {
+                    WideCardView(item, onCard, modifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
+                } else {
+                    MediaCardView(item, onCard, modifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
+                }
             }
         }
     }
@@ -1730,8 +1859,8 @@ internal fun BrowseScreen(
             columns = GridCells.Adaptive(minSize = PosterWidth),
             state = gridState,
             contentPadding = PaddingValues(vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(TileGap),
+            verticalArrangement = Arrangement.spacedBy(TileGap),
         ) {
             items(cards) { card ->
                 val key = "${card.mediaType}:${card.tmdbId}"
@@ -1773,8 +1902,8 @@ internal fun GridScreen(
             columns = GridCells.Adaptive(minSize = PosterWidth),
             state = gridState,
             contentPadding = PaddingValues(vertical = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(TileGap),
+            verticalArrangement = Arrangement.spacedBy(TileGap),
         ) {
             itemsIndexed(cards) { index, card ->
                 val key = "${card.mediaType}:${card.tmdbId}"
@@ -1811,8 +1940,8 @@ internal fun SearchScreen(
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = PosterWidth),
             contentPadding = PaddingValues(vertical = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(TileGap),
+            verticalArrangement = Arrangement.spacedBy(TileGap),
         ) {
             items(cards) { MediaCardView(it, onCard, Modifier, onLongCard) }
         }
@@ -1975,18 +2104,18 @@ internal fun LiveScreen(
                     Text("No channels match this search or category.", color = Muted, modifier = Modifier.padding(top = 20.dp))
                 }
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 168.dp),
+                    columns = GridCells.Adaptive(minSize = 190.dp),
                     state = gridState,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(vertical = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(TileGap),
+                    verticalArrangement = Arrangement.spacedBy(TileGap),
                 ) {
                     itemsIndexed(filteredChannels) { index, channel ->
                         val tileModifier = when {
-                            channel.channelId == focusedChannelId -> Modifier.height(116.dp).focusRequester(restoreFocus)
-                            index == 0 -> Modifier.height(116.dp).focusRequester(firstChannel)
-                            else -> Modifier.height(116.dp)
+                            channel.channelId == focusedChannelId -> Modifier.height(158.dp).focusRequester(restoreFocus)
+                            index == 0 -> Modifier.height(158.dp).focusRequester(firstChannel)
+                            else -> Modifier.height(158.dp)
                         }
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown || event.key != Key.DirectionLeft) return@onPreviewKeyEvent false
@@ -2002,13 +2131,24 @@ internal fun LiveScreen(
                             }
                             .onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
                         TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
-                            Text("📺", fontSize = 26.sp)
+                            Text("📺", fontSize = 24.sp)
                             Spacer(Modifier.height(4.dp))
-                            Text(channel.name, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            channel.nowPlaying?.title?.takeIf { it.isNotBlank() }?.let { programme ->
-                                Text(programme, color = Purple, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(channel.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            channel.nowPlaying?.let { programme ->
+                                Text(
+                                    "NOW ${programme.title}",
+                                    color = Purple,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                ProgrammeProgress(programme)
                             }
-                            Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            channel.nextPlaying?.title?.takeIf { it.isNotBlank() }?.let { next ->
+                                Text("NEXT $next", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }

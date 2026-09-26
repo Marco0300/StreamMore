@@ -96,18 +96,6 @@ class ScreenshotTest {
         return bitmap
     }
 
-    /** Counts pixels bright enough to be the focused tile's white border. */
-    private fun whitePixels(bitmap: Bitmap): Int {
-        var count = 0
-        for (x in 0 until bitmap.width) {
-            for (y in 0 until bitmap.height) {
-                val pixel = bitmap.getPixel(x, y)
-                if (Color.red(pixel) > 220 && Color.green(pixel) > 220 && Color.blue(pixel) > 220) count++
-            }
-        }
-        return count
-    }
-
     private fun shot(name: String, onReady: (() -> Unit)? = null, content: @Composable () -> Unit) {
         compose.setContent { AppFrame(content) }
         compose.waitForIdle()
@@ -275,13 +263,20 @@ class ScreenshotTest {
 
     /**
      * Hard assertion that the focus treatment renders: the focused tile must draw
-     * a bright border that the unfocused tiles do not.
+     * the brand ring, which its unfocused siblings do not. Rendered as two rows in
+     * one composition (a Compose rule only allows one setContent), compared by
+     * counting brand-coloured pixels in each half of the capture.
      */
     @Test
-    fun focusedBorderRenders() {
+    fun focusedRingRenders() {
         compose.setContent {
             AppFrame {
-                Column(Modifier.padding(40.dp)) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                        FocusTile(focused = false)
+                        FocusTile(focused = false)
+                        FocusTile(focused = false)
+                    }
                     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         FocusTile(focused = false)
                         FocusTile(focused = true)
@@ -292,10 +287,14 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
 
-        val focusedCount = whitePixels(capture())
-        println("FOCUS WHITE PIXELS (1 focused of 3) = $focusedCount")
-        check(focusedCount > 300) {
-            "focused tile should draw a bright border; found $focusedCount near-white pixels"
+        val bitmap = capture()
+        writePng("25-focus-ring", bitmap)
+        val half = bitmap.height / 2
+        val unfocusedRow = purplePixels(Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, half))
+        val focusedRow = purplePixels(Bitmap.createBitmap(bitmap, 0, half, bitmap.width, bitmap.height - half))
+        println("FOCUS RING PIXELS unfocused=$unfocusedRow focused=$focusedRow")
+        check(focusedRow > unfocusedRow + 300) {
+            "the focused tile should draw the brand ring: unfocused=$unfocusedRow focused=$focusedRow"
         }
     }
 
@@ -375,8 +374,27 @@ internal object Fake {
         trailerKey = "dQw4w9WgXcQ",
     )
 
+    /** Mirrors the backend's resume row: a still, an episode number and a position. */
+    val resumeItems: List<MediaCard> = (1..6).map { i ->
+        MediaCard(
+            mediaType = "tv",
+            tmdbId = 2000 + i,
+            title = listOf("The Bear", "Reacher", "Monster: The Lizzie Borden Story")[i % 3],
+            poster = "https://image.tmdb.org/t/p/w500/poster$i.jpg",
+            backdrop = "https://image.tmdb.org/t/p/w780/backdrop$i.jpg",
+            year = "2025",
+            rating = 7.5 + (i % 10) / 10.0,
+            season = 2,
+            episode = i,
+            episodeTitle = "Episode $i",
+            positionSeconds = 300.0 * i,
+            durationSeconds = 1800.0,
+            percent = (300.0 * i) / 1800.0,
+        )
+    }
+
     val rows = listOf(
-        HomeRow("r1", "Continue Watching", cards(8)),
+        HomeRow("continue", "Continue Watching", resumeItems),
         HomeRow("r2", "Trending Now", cards(8)),
         HomeRow("r3", "New Releases", cards(8)),
     )
@@ -385,8 +403,29 @@ internal object Fake {
         Person(id = 500 + it, name = "Actor Name $it", character = "Character $it", profile = "https://image.tmdb.org/t/p/w185/poster-profile$it.jpg")
     }
 
-    val channels = (1..12).map {
-        LiveChannel("ch$it", "$it", "Channel $it", if (it % 2 == 0) "Sports" else "Movies", "ZA")
+    val channels = (1..12).map { i ->
+        // A guide window around "now", so the tile's programme progress bar renders.
+        val now = System.currentTimeMillis()
+        LiveChannel(
+            id = "ch$i",
+            channelId = "$i",
+            name = "Channel $i",
+            genre = if (i % 2 == 0) "Sports" else "Movies",
+            country = "ZA",
+            nowPlaying = LiveProgram(
+                id = "now$i",
+                title = "Live Match $i",
+                startMs = now - 30 * 60_000L,
+                endMs = now + 30 * 60_000L,
+                isLive = true,
+            ),
+            nextPlaying = LiveProgram(
+                id = "next$i",
+                title = "Highlights $i",
+                startMs = now + 30 * 60_000L,
+                endMs = now + 90 * 60_000L,
+            ),
+        )
     }
 
     val activity = listOf(

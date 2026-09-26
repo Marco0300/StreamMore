@@ -2,6 +2,7 @@ package com.marco.streammore.tv
 
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.roundToInt
 
 data class Profile(
     val id: String,
@@ -29,6 +30,12 @@ data class MediaCard(
     val ribbon: String? = null,
     val season: Int? = null,
     val episode: Int? = null,
+    /** Episode name, sent by the backend for Continue Watching rows. */
+    val episodeTitle: String? = null,
+    /** Playback position in seconds, as the backend stores it. */
+    val positionSeconds: Double? = null,
+    /** Total runtime in seconds, as the backend stores it. */
+    val durationSeconds: Double? = null,
 )
 
 data class HomeRow(
@@ -277,6 +284,42 @@ internal fun resumablePositionMs(position: Double?, duration: Double?, percent: 
 
 internal fun isWatchedProgress(progress: Double): Boolean = progress >= 0.95
 
+/** How far a live programme has aired, for the progress bar on a channel tile. */
+internal fun programmeProgressFraction(startMs: Long, endMs: Long, nowMs: Long): Double {
+    if (startMs <= 0L || endMs <= startMs) return 0.0
+    return ((nowMs - startMs).toDouble() / (endMs - startMs).toDouble()).coerceIn(0.0, 1.0)
+}
+
+/**
+ * "12m left" / "1h 42m left" for a title whose runtime is known, or null when it
+ * is not. The position falls back to the watched fraction, because a row that
+ * only carries a percentage can still say how much is left.
+ */
+internal fun remainingLabel(positionSeconds: Double?, durationSeconds: Double?, percent: Double = 0.0): String? {
+    val duration = durationSeconds?.takeIf { it > 0.0 } ?: return null
+    val position = positionSeconds ?: (percent.coerceIn(0.0, 1.0) * duration)
+    val leftSeconds = duration - position
+    // Under half a minute left is not worth a label.
+    if (leftSeconds < 30.0) return null
+    val minutes = (leftSeconds / 60.0).roundToInt().coerceAtLeast(1)
+    val hours = minutes / 60
+    val rest = minutes % 60
+    return when {
+        hours <= 0 -> "${minutes}m left"
+        rest == 0 -> "${hours}h left"
+        else -> "${hours}h ${rest}m left"
+    }
+}
+
+/** Caption under a Continue Watching tile, for example "S2E4 · 12m left". */
+internal fun watchCaption(card: MediaCard): String? {
+    val parts = buildList {
+        if (card.season != null && card.episode != null) add("S${card.season}E${card.episode}")
+        remainingLabel(card.positionSeconds, card.durationSeconds, card.percent)?.let { add(it) }
+    }
+    return parts.takeIf { it.isNotEmpty() }?.joinToString(" · ")
+}
+
 data class ResumePoint(val season: Int, val episode: Int)
 
 internal fun resumePointFrom(season: Int?, episode: Int?): ResumePoint? =
@@ -320,6 +363,9 @@ fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     ribbon = optString("ribbon", null),
     season = if (has("season") && !isNull("season")) optInt("season") else null,
     episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
+    episodeTitle = optString("episodeTitle", null),
+    positionSeconds = if (has("position") && !isNull("position")) optDouble("position") else null,
+    durationSeconds = if (has("duration") && !isNull("duration")) optDouble("duration") else null,
 )
 
 fun JSONObject.toBrowsePage(): BrowsePage {
