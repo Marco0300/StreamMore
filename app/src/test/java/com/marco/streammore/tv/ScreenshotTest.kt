@@ -21,6 +21,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -36,6 +37,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import kotlin.math.abs
 
 /**
  * Renders the real Compose screens to PNG on the JVM via Robolectric's native
@@ -298,6 +300,92 @@ class ScreenshotTest {
         }
     }
 
+    /**
+     * Hard assertion on the avatar: the glyph must be centred in its circle and
+     * fill it. A bare `Text` inside a fixed-size circle lands in the top half
+     * instead, because an emoji's line box is far taller than the glyph and the
+     * card's column wraps that height rather than centring it - the regression
+     * this test exists to catch.
+     */
+    @Test
+    fun profileAvatarIsCentredAndFillsItsCircle() {
+        compose.setContent {
+            AppFrame { ProfileScreen(listOf(Profile("p1", "Marco", "🦊", false)), null) { } }
+        }
+        compose.waitForIdle()
+
+        val bitmap = capture()
+        writePng("27-avatar", bitmap)
+
+        // The single avatar is centred, so its equator is the widest run of
+        // non-background pixels in the image.
+        val background = bitmap.getPixel(4, 4)
+        fun isBackground(x: Int, y: Int): Boolean {
+            val p = bitmap.getPixel(x, y)
+            return p == background
+        }
+        var equator = 0
+        var left = 0
+        var right = 0
+        for (y in 0 until bitmap.height) {
+            var runStart = -1
+            for (x in 0 until bitmap.width) {
+                val ink = !isBackground(x, y)
+                if (ink && runStart < 0) runStart = x
+                if ((!ink || x == bitmap.width - 1) && runStart >= 0) {
+                    val runEnd = if (ink) x else x - 1
+                    if (runEnd - runStart > right - left) {
+                        left = runStart; right = runEnd; equator = y
+                    }
+                    runStart = -1
+                }
+            }
+        }
+        val cx = (left + right) / 2
+        var top = equator
+        while (top > 0 && !isBackground(cx, top - 1)) top--
+        var bottom = equator
+        while (bottom < bitmap.height - 1 && !isBackground(cx, bottom + 1)) bottom++
+        val diameter = minOf(right - left + 1, bottom - top + 1)
+        val circleCx = (left + right) / 2f
+        val circleCy = (top + bottom) / 2f
+        val radius = diameter / 2f
+
+        // Ink inside the disc that is neither the card fill nor its ring.
+        val fills = listOf(Panel.toArgb(), BorderIdle.toArgb())
+        var minX = Int.MAX_VALUE
+        var maxX = -1
+        var minY = Int.MAX_VALUE
+        var maxY = -1
+        for (y in top..bottom) {
+            for (x in left..right) {
+                val dx = x - circleCx
+                val dy = y - circleCy
+                if (dx * dx + dy * dy > (radius - 6f) * (radius - 6f)) continue
+                val p = bitmap.getPixel(x, y)
+                if (fills.any { c ->
+                        abs(Color.red(p) - Color.red(c)) <= 12 &&
+                            abs(Color.green(p) - Color.green(c)) <= 12 &&
+                            abs(Color.blue(p) - Color.blue(c)) <= 12
+                    }) continue
+                if (isBackground(x, y)) continue
+                minX = minOf(minX, x); maxX = maxOf(maxX, x)
+                minY = minOf(minY, y); maxY = maxOf(maxY, y)
+            }
+        }
+        check(maxX >= minX && maxY >= minY) { "the avatar drew no glyph at all" }
+        val glyphCx = (minX + maxX) / 2f
+        val glyphCy = (minY + maxY) / 2f
+        val fill = (maxY - minY + 1) / diameter.toFloat()
+        println(
+            "AVATAR circle=${diameter}px ink=${maxX - minX + 1}x${maxY - minY + 1} " +
+                "offset=(${glyphCx - circleCx}, ${glyphCy - circleCy}) fill=$fill",
+        )
+        check(abs(glyphCx - circleCx) <= 6f) { "the avatar glyph is ${glyphCx - circleCx}px off centre horizontally" }
+        check(abs(glyphCy - circleCy) <= 6f) { "the avatar glyph is ${glyphCy - circleCy}px off centre vertically (it used to sit in the top half)" }
+        check(fill >= 0.5f) { "the avatar glyph only fills $fill of its circle" }
+    }
+
     /** Confirms the dark scheme's red primary actually reaches Material3 components. */
     @Test
     fun themePrimary() {
@@ -339,9 +427,9 @@ class ScreenshotTest {
 
 internal object Fake {
     val profiles = listOf(
-        Profile("p1", "Marco", null, false),
+        Profile("p1", "Marco", "🦊", false),
         Profile("p2", "Kids", "K", true),
-        Profile("p3", "Guest", null, false),
+        Profile("p3", "Guest", "🦁", false),
     )
 
     fun cards(count: Int): List<MediaCard> = (1..count).map { i ->

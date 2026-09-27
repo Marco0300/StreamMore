@@ -37,6 +37,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -97,9 +98,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.PlatformTextStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -1416,6 +1421,44 @@ internal fun ProfilePinScreen(profile: Profile, error: String?, onSubmit: (Strin
     }
 }
 
+/** Diameter of a profile avatar on the picker. */
+private val ProfileAvatarSize = 142.dp
+
+/**
+ * How much of the circle a single glyph should occupy. Measured against renders:
+ * an emoji's visible art is smaller than its font size, so this sits well above
+ * it to fill the disc.
+ */
+private const val AvatarGlyphRatio = 0.74f
+
+/**
+ * The glyph inside a circular profile avatar.
+ *
+ * A bare `Text` in a fixed-size circle lands in the top half of it with a lot of
+ * empty space below: an emoji's line box is far taller than the glyph, and the
+ * card's column wraps that height instead of centring it. Collapsing the line box
+ * and dropping the font padding makes the glyph the text's real bounds, so it
+ * centres in the disc and scales to fill it.
+ */
+@Composable
+internal fun AvatarGlyph(profile: Profile, size: Dp, color: Color = TextPrimary) {
+    val glyph = profile.avatar?.takeIf { it.isNotBlank() } ?: profile.name.take(1).uppercase()
+    val fontSize = (size.value * AvatarGlyphRatio).sp
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(
+            text = glyph,
+            color = color,
+            textAlign = TextAlign.Center,
+            style = TextStyle(
+                fontSize = fontSize,
+                lineHeight = fontSize,
+                platformStyle = PlatformTextStyle(includeFontPadding = false),
+            ),
+            modifier = Modifier.fillMaxWidth().wrapContentHeight(Alignment.CenterVertically),
+        )
+    }
+}
+
 @Composable
 internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (Profile) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1430,10 +1473,10 @@ internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (P
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(154.dp)) {
                             TvCard(
                                 { onSelect(profile) },
-                                Modifier.size(142.dp),
+                                Modifier.size(ProfileAvatarSize),
                                 shape = CircleShape,
                             ) {
-                                Text(profile.avatar ?: profile.name.take(1).uppercase(), fontSize = 42.sp)
+                                AvatarGlyph(profile, ProfileAvatarSize)
                             }
                             Spacer(Modifier.height(12.dp))
                             Text(
