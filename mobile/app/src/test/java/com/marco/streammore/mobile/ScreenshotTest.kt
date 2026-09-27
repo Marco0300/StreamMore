@@ -339,9 +339,10 @@ class ScreenshotTest {
 // ------------------------------------------------------------------ fixtures
 
 internal object Fake {
+    /** Mirrors production data: the server only stores the `PROFILE_AVATARS` emoji. */
     val profiles = listOf(
-        Profile("p1", "Marco", null, false),
-        Profile("p2", "Kids", "K", true),
+        Profile("p1", "Marco", "🦊", false),
+        Profile("p2", "Kids", "🐼", true),
         Profile("p3", "Guest", null, false),
     )
 

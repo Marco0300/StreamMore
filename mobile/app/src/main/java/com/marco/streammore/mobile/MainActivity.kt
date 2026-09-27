@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
@@ -58,6 +59,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -100,14 +102,24 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -1006,33 +1018,57 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
     }
 }
 
+/** A destination in the signed-in bottom bar, with its own icon. */
+internal data class MobileDestination(val label: String, val target: TvScreen, val iconRes: Int)
+
+/** Test handle for a bottom-bar icon. */
+internal fun mobileNavIconTag(label: String): String = "nav-icon-$label"
+
+/**
+ * The signed-in bottom bar. It mirrors the web nav (`Home`, `TV Shows`, `Movies`,
+ * `New & Hot`, `Live TV`, `My List`) with Search promoted to the bar on a phone and
+ * shortened labels so seven items still fit a portrait screen.
+ */
+internal fun mobileNavigationDestinations(): List<MobileDestination> = listOf(
+    MobileDestination("Home", TvScreen.Home, R.drawable.ic_nav_home),
+    MobileDestination("Shows", TvScreen.Browse("tv"), R.drawable.ic_nav_shows),
+    MobileDestination("Movies", TvScreen.Browse("movie"), R.drawable.ic_nav_movies),
+    MobileDestination("Search", TvScreen.Search, R.drawable.ic_nav_search),
+    MobileDestination("New", TvScreen.NewHot, R.drawable.ic_nav_new),
+    MobileDestination("Live", TvScreen.Live, R.drawable.ic_nav_live),
+    MobileDestination("My List", TvScreen.MyList, R.drawable.ic_nav_list),
+)
+
+/** Whether [target] is the destination currently on screen. */
+internal fun mobileDestinationActive(screen: TvScreen, target: TvScreen): Boolean = when (target) {
+    TvScreen.Home -> screen is TvScreen.Home
+    TvScreen.Search -> screen is TvScreen.Search
+    TvScreen.NewHot -> screen is TvScreen.NewHot
+    TvScreen.Live -> screen is TvScreen.Live
+    TvScreen.MyList -> screen is TvScreen.MyList
+    is TvScreen.Browse -> screen is TvScreen.Browse && screen.mediaType == target.mediaType
+    else -> false
+}
+
 @Composable
 private fun MobileBottomBar(screen: TvScreen, navigate: (TvScreen) -> Unit) {
     NavigationBar(containerColor = Bg, contentColor = TextPrimary) {
-        val destinations = listOf(
-            "Home" to TvScreen.Home,
-            "TV" to TvScreen.Browse("tv"),
-            "Movies" to TvScreen.Browse("movie"),
-            "Search" to TvScreen.Search,
-            "New" to TvScreen.NewHot,
-            "Live" to TvScreen.Live,
-            "My List" to TvScreen.MyList,
-        )
-        destinations.forEach { (label, target) ->
-            val active = when (target) {
-                TvScreen.Home -> screen is TvScreen.Home
-                TvScreen.Search -> screen is TvScreen.Search
-                TvScreen.NewHot -> screen is TvScreen.NewHot
-                TvScreen.Live -> screen is TvScreen.Live
-                TvScreen.MyList -> screen is TvScreen.MyList
-                is TvScreen.Browse -> screen is TvScreen.Browse && screen.mediaType == target.mediaType
-                else -> false
-            }
+        mobileNavigationDestinations().forEach { destination ->
+            val active = mobileDestinationActive(screen, destination.target)
             NavigationBarItem(
                 selected = active,
-                onClick = { navigate(target) },
-                icon = { Text(if (active) "●" else "○", color = if (active) Purple else Muted) },
-                label = { Text(label, maxLines = 1, fontSize = 10.sp) },
+                onClick = { navigate(destination.target) },
+                icon = {
+                    Icon(
+                        painter = painterResource(destination.iconRes),
+                        contentDescription = null,
+                        tint = if (active) Purple else Muted,
+                        modifier = Modifier
+                            .size(22.dp)
+                            .testTag(mobileNavIconTag(destination.label)),
+                    )
+                },
+                label = { Text(destination.label, maxLines = 1, fontSize = 10.sp) },
             )
         }
     }
@@ -1352,6 +1388,133 @@ internal fun ProfilePinScreen(profile: Profile, error: String?, onSubmit: (Strin
     }
 }
 
+/** Diameter of a profile avatar on the picker. */
+private val ProfileAvatarSize = 142.dp
+
+/**
+ * Fraction of the avatar disc that the glyph's measured box should fill. The server
+ * only stores emoji (`PROFILE_AVATARS`), whose artwork is smaller than its em box, so
+ * this stays a little below 1 to leave the artwork clear of the circle's edge.
+ */
+internal const val AvatarInkFraction = 0.78f
+
+/** Font size, as a fraction of the disc, used when a glyph's metrics are unusable. */
+internal const val AvatarFallbackFontRatio = 0.5f
+
+/** Reference size a glyph is measured at before being scaled to the disc. */
+private const val AvatarProbeFontSize = 100f
+
+/** Test handle for a profile avatar glyph. */
+internal fun mobileAvatarGlyphTag(profileId: String): String = "avatar-glyph-$profileId"
+
+/** The glyph shown in a profile avatar: the profile's emoji, or the name's initial. */
+internal fun avatarGlyphText(profile: Profile): String =
+    profile.avatar?.takeIf { it.isNotBlank() }
+        ?: profile.name.trim().take(1).uppercase().ifBlank { "?" }
+
+/** The measured box of a laid-out glyph, in pixels. */
+internal data class AvatarGlyphInk(val left: Float, val top: Float, val right: Float, val bottom: Float) {
+    val width: Float get() = right - left
+    val height: Float get() = bottom - top
+}
+
+/** The glyph's box as laid out, used to size and centre it against the disc. */
+internal fun avatarGlyphInk(layout: TextLayoutResult): AvatarGlyphInk {
+    if (layout.layoutInput.text.isEmpty()) return AvatarGlyphInk(0f, 0f, 0f, 0f)
+    // The glyph is a single character (an emoji or an initial), so offset 0 is the
+    // whole glyph; a surrogate pair is still one character offset.
+    val box = layout.getBoundingBox(0)
+    return AvatarGlyphInk(box.left, box.top, box.right, box.bottom)
+}
+
+/**
+ * Font size (px) at which a glyph box of [inkWidth] x [inkHeight] fills
+ * [inkFraction] of a [diameterPx] disc.
+ *
+ * Glyph metrics scale linearly with the font size, so measuring once at
+ * [probeFontSizePx] is enough to derive the exact size that fits.
+ */
+internal fun fittedAvatarGlyphFontSizePx(
+    inkWidth: Float,
+    inkHeight: Float,
+    probeFontSizePx: Float,
+    diameterPx: Float,
+    inkFraction: Float = AvatarInkFraction,
+    fallbackRatio: Float = AvatarFallbackFontRatio,
+): Float {
+    if (diameterPx <= 0f) return 0f
+    val largest = maxOf(inkWidth, inkHeight)
+    if (probeFontSizePx <= 0f || !largest.isFinite() || largest <= 0f) return diameterPx * fallbackRatio
+    return probeFontSizePx * ((diameterPx * inkFraction) / largest)
+}
+
+/** Vertical offset that centres a glyph's box inside its line box. */
+internal fun avatarGlyphInkOffsetY(lineHeightPx: Float, inkTopPx: Float, inkBottomPx: Float): Float {
+    if (!lineHeightPx.isFinite() || !inkTopPx.isFinite() || !inkBottomPx.isFinite()) return 0f
+    return lineHeightPx / 2f - (inkTopPx + inkBottomPx) / 2f
+}
+
+/** Font size and vertical offset that place a profile glyph inside its disc. */
+internal data class AvatarGlyphMetrics(val fontSizePx: Float, val offsetY: Float)
+
+/**
+ * The glyph inside a circular profile avatar.
+ *
+ * The font size comes from the glyph's measured box rather than a hand-tuned ratio,
+ * so emoji (which are wider and taller than a letter's ink) fit inside the disc
+ * instead of being clipped by the card's circle. The text is then offset so that box
+ * is centred, because an emoji's ascent/descent do not centre its artwork.
+ *
+ * The line box is deliberately left at its natural height: clamping it with
+ * `lineHeight` squeezes the glyph and cuts the top and bottom off emoji artwork.
+ */
+@Composable
+internal fun AvatarGlyph(profile: Profile, size: Dp, color: Color = TextPrimary) {
+    val glyph = avatarGlyphText(profile)
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val diameterPx = with(density) { size.toPx() }
+    val probeFontSizePx = with(density) { AvatarProbeFontSize.sp.toPx() }
+
+    val metrics = remember(glyph, diameterPx, color) {
+        val probe = measurer.measure(
+            text = AnnotatedString(glyph),
+            style = TextStyle(color = color, fontSize = AvatarProbeFontSize.sp),
+        )
+        val box = avatarGlyphInk(probe)
+        val fitted = fittedAvatarGlyphFontSizePx(
+            inkWidth = box.width,
+            inkHeight = box.height,
+            probeFontSizePx = probeFontSizePx,
+            diameterPx = diameterPx,
+        )
+        val scale = if (probeFontSizePx > 0f) fitted / probeFontSizePx else 1f
+        AvatarGlyphMetrics(
+            fontSizePx = fitted,
+            offsetY = avatarGlyphInkOffsetY(
+                lineHeightPx = probe.size.height * scale,
+                inkTopPx = box.top * scale,
+                inkBottomPx = box.bottom * scale,
+            ),
+        )
+    }
+
+    Box(
+        Modifier.fillMaxSize().testTag(mobileAvatarGlyphTag(profile.id)),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = glyph,
+            color = color,
+            textAlign = TextAlign.Center,
+            maxLines = 1,
+            softWrap = false,
+            style = TextStyle(fontSize = with(density) { metrics.fontSizePx.toSp() }),
+            modifier = Modifier.offset { IntOffset(0, metrics.offsetY.roundToInt()) },
+        )
+    }
+}
+
 @Composable
 internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (Profile) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1370,10 +1533,10 @@ internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (P
                         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(154.dp)) {
                             TvCard(
                                 { onSelect(profile) },
-                                Modifier.size(142.dp),
+                                Modifier.size(ProfileAvatarSize),
                                 shape = CircleShape,
                             ) {
-                                Text(profile.avatar ?: profile.name.take(1).uppercase(), fontSize = 42.sp)
+                                AvatarGlyph(profile, ProfileAvatarSize)
                             }
                             Spacer(Modifier.height(12.dp))
                             Text(
