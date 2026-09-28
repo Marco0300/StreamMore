@@ -11,8 +11,8 @@ android {
         applicationId = "com.marco.streammore.tv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 49
-        versionName = "1.18.4"
+        versionCode = 50
+        versionName = "1.18.5"
     }
 
     val releaseKeystore = System.getenv("STREAMMORE_RELEASE_KEYSTORE")
@@ -32,7 +32,7 @@ android {
 
     buildTypes {
         debug {
-            buildConfigField("String", "STREAMMORE_BASE_URL", "\"http://192.168.3.91:3896\"")
+            buildConfigField("String", "STREAMMORE_BASE_URL", "\"http://192.168.3.221:3896\"")
         }
         release {
             isMinifyEnabled = false

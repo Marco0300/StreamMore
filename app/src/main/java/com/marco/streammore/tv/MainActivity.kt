@@ -3052,19 +3052,18 @@ internal fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
-        // The clock stays up for the whole of playback: the control row hides after
-        // five seconds, and a viewer checking the time should not have to wake it.
-        val clockMs = rememberWallClockMs()
-        Text(
-            formatWallClock(clockMs),
-            color = Color.White,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            style = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 8f)),
-            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 20.dp),
-        )
         if (chromeVisible) {
+            // The clock is part of the playback UI and hides with the controls.
+            val clockMs = rememberWallClockMs()
+            Text(
+                formatWallClock(clockMs),
+                color = Color.White,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                style = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 8f)),
+                modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 20.dp),
+            )
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(

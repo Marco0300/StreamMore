@@ -308,13 +308,9 @@ class ScreenshotTest {
         }
     }
 
-    /**
-     * The playback screen's clock, rendered from the real [PlayerScreen] (ExoPlayer
-     * and all) with nothing touched: the control row hides itself after five
-     * seconds, and the clock deliberately is not part of that row.
-     */
+    /** The playback clock must be hidden together with the controls until playback UI is shown. */
     @Test
-    fun thePlayerKeepsTheClockOnScreenWithoutInput() {
+    fun thePlayerHidesTheClockWhenPlaybackControlsAreHidden() {
         compose.setContent {
             AppFrame {
                 PlayerScreen(
@@ -330,9 +326,9 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
         writePng("31-player-clock", capture())
-        assertClockPresent()
-        // The seek bar and its finish time belong to the control row, which is hidden
-        // until the viewer wakes it.
+        val clocks = compose.onAllNodes(clockMatcher, useUnmergedTree = true).fetchSemanticsNodes()
+        check(clocks.isEmpty()) { "the playback clock should be hidden with the playback controls" }
+        // The seek bar and its finish time belong to that same hidden control row.
         val captions = compose.onAllNodesWithText("Ends at", substring = true, useUnmergedTree = true)
             .fetchSemanticsNodes()
         check(captions.isEmpty()) { "the control row should start hidden, and the caption with it" }
