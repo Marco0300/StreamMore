@@ -3076,7 +3076,10 @@ internal fun PlayerScreen(
                 ),
             )
             Row(
-                Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 24.dp, top = 20.dp, end = 28.dp),
+                // The row stops 96dp short of the right edge — the clock's 28dp margin
+                // plus its ~43dp of text and a gap — so a long title ellipsises in front
+                // of the clock instead of running underneath it.
+                Modifier.align(Alignment.TopStart).fillMaxWidth().padding(start = 24.dp, top = 20.dp, end = 96.dp),
                 verticalAlignment = Alignment.Top,
             ) {
                 TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
@@ -3084,6 +3087,8 @@ internal fun PlayerScreen(
                 }
                 Column(Modifier.padding(start = 12.dp).weight(1f)) {
                     Text("NOW PLAYING", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                    // The row reserves the clock's corner on its right, so a long title
+                    // ellipsises instead of running underneath it.
                     Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         if (season != null && episode != null) "S${season}E${episode} · Streammore" else "Streammore",
