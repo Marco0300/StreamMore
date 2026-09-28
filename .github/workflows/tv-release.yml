@@ -25,11 +25,17 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@v4
 
-      - name: Set up Java 17
+      - name: Set up Java 21
+        # 21, not 17: the suite is green on 21. On 17 the player screenshot test
+        # dies in Robolectric, because JDK 17 resolves every method signature of
+        # android.bluetooth.BluetoothDevice eagerly (reflection only became lazy in
+        # JDK 18) and Robolectric's API 34 android-all jar has no
+        # BluetoothDevice$BluetoothAddress for Media3's Spatializer path to resolve.
+        # The APK still compiles to Java 17 bytecode (see sourceCompatibility).
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
