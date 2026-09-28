@@ -100,13 +100,11 @@ jobs:
           # between build-tools versions, and an unmatched label used to look exactly
           # like a wrong signer.
           certs="$("$apksigner" verify --print-certs "$apk")"
-          printf '%s\n' "$certs"
           signer="$(printf '%s\n' "$certs" | grep -i 'sha-256' | grep -oiE '[0-9a-f]{64}' | head -1 | tr 'A-Z' 'a-z')"
           test -n "$signer" || { echo 'No SHA-256 fingerprint in apksigner --print-certs output'; exit 1; }
           if [ "$signer" != "$EXPECTED_SIGNER_SHA256" ]; then
             echo 'Signer does not match the key the installed app was signed with,'
-            echo 'so this APK would not install over it. Check which keystore was used.'
-            printf 'expected %s\nactual   %s\n' "$EXPECTED_SIGNER_SHA256" "$signer"
+            echo 'so this APK would not install over it. Signing details are withheld from logs.'
             exit 1
           fi
           asset="Streammore-TV-v${apk_version}-release.apk"
@@ -116,9 +114,9 @@ jobs:
           printf 'ASSET_PATH=%s\n' "$asset" >> "$GITHUB_ENV"
           printf 'SHA256=%s\n' "$digest" >> "$GITHUB_ENV"
           printf 'SHA-256: %s\n' "$digest" > release-digest.txt
-          printf 'signer=%s\ndigest=%s\n' "$signer" "$digest" >> "$GITHUB_STEP_SUMMARY"
-          printf '## Streammore TV v%s\n\n- signer: `%s`\n- SHA-256: `%s`\n' \
-            "$apk_version" "$signer" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_STEP_SUMMARY"
+          printf '## Streammore TV v%s\n\n- SHA-256: `%s`\n' \
+            "$apk_version" "$digest" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/v')
