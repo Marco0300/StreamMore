@@ -66,6 +66,17 @@ android {
         unitTests {
             isIncludeAndroidResources = true
             isReturnDefaultValues = true
+            all { test ->
+                // A failed test must print the class it could not load. The default
+                // short format reduces a NoClassDefFoundError to two lines, which is
+                // unactionable on CI where the HTML report is not reachable.
+                test.testLogging {
+                    events("failed")
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                    showCauses = true
+                    showStackTraces = true
+                }
+            }
         }
     }
 }

@@ -117,3 +117,14 @@ jobs:
             cannot hide this one.
           files: ${{ env.ASSET_PATH }}
           fail_on_unmatched_files: true
+
+      - name: Keep the test reports when the gate fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv-test-reports
+          path: |
+            app/build/reports/tests/testDebugUnitTest
+            app/build/test-results/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
