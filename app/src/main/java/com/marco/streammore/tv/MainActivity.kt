@@ -94,6 +94,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -218,6 +219,13 @@ internal val TileGap = 16.dp
 internal val StillWidth = 250.dp
 internal val StillHeight = 141.dp
 private val NavHeight = 54.dp
+
+/**
+ * How long the player shows the finished frame before auto-exiting to the page
+ * that started playback. Long enough for the final progress write to land and for
+ * the viewer to register the end; short enough not to feel like a hang.
+ */
+private const val AutoExitAfterEndMs = 2_000L
 
 internal fun formatPlayerTime(milliseconds: Long): String {
     val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1000L).toInt()
@@ -929,6 +937,10 @@ internal fun StreammoreTvApp() {
                         liveNextProgramTitle = current.liveNextProgramTitle,
                         liveNextProgramStartMs = current.liveNextProgramStartMs,
                         nextEpisodeError = nextEpisodeError,
+                        // Nothing follows a movie, or a series' last episode, so the
+                        // player returns to this detail page when it ends. Trailers and
+                        // Live TV carry no media type and keep the player.
+                        autoExitWhenFinished = current.mediaType != null && current.nextEpisode == null,
                     )
                 }
                 }
@@ -1007,6 +1019,16 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
             Text(profile?.name ?: "Profile", color = Muted, fontSize = 14.sp)
             Spacer(Modifier.width(8.dp))
             TextButton({ navigate(TvScreen.Profiles) }) { Text("Switch", color = TextPrimary, fontSize = 14.sp) }
+            Spacer(Modifier.width(20.dp))
+            // The time of day sits in the corner on every section, so a viewer never
+            // has to leave what they are reading to check it.
+            Text(
+                rememberWallClock(),
+                color = TextPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+            )
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF222222)))
         Box(Modifier.fillMaxSize()) { content() }
@@ -2293,6 +2315,21 @@ internal fun DetailScreen(
                         TvButton({ onRate(if (detail.myRating == "up") null else "up") }) { Text("👍") }
                         TvButton({ onRate(if (detail.myRating == "down") null else "down") }) { Text("👎") }
                     }
+                    // What a viewer wants before committing: the time this is over,
+                    // from the saved position, or the episode Resume/Play would open.
+                    // Absent when no runtime is published rather than a placeholder.
+                    val nowMs = rememberWallClockMs()
+                    detailFinishCaption(detail, episodes, selectedSeason, nowMs)?.let { caption ->
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            caption,
+                            color = TextPrimary,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     error?.let {
                         Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
                     }
@@ -2341,6 +2378,15 @@ internal fun DetailScreen(
                 }
             }
         }
+
+        // Top-right clock, mirroring the "‹ Back" affordance on the left.
+        Text(
+            rememberWallClock(),
+            color = TextPrimary,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 26.dp, end = 60.dp),
+        )
     }
 }
 
@@ -2566,6 +2612,12 @@ internal fun PlayerScreen(
     liveNextProgramTitle: String? = null,
     liveNextProgramStartMs: Long? = null,
     nextEpisodeError: String? = null,
+    /**
+     * True when nothing follows this stream — a movie, or a series' last episode.
+     * The player then hands the viewer back to the page that started it instead of
+     * leaving them on a finished frame.
+     */
+    autoExitWhenFinished: Boolean = false,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -2743,6 +2795,16 @@ internal fun PlayerScreen(
         handOffToNext(next)
     }
 
+    // A movie, or a series with nothing left after this episode, has no next episode
+    // to offer: ending on a frozen frame is a dead end, so return to the page that
+    // started playback. An early provider close counts as the end too, otherwise the
+    // viewer is left staring at a network error when the file really is over.
+    LaunchedEffect(endOfMediaReached, autoExitWhenFinished) {
+        if (!endOfMediaReached || !autoExitWhenFinished) return@LaunchedEffect
+        delay(AutoExitAfterEndMs)
+        onBack()
+    }
+
     // A failure to start the next episode must be visible even when the prompt was
     // not on screen yet, because that failure is what leaves the viewer stuck.
     LaunchedEffect(nextEpisodeError) {
@@ -2891,8 +2953,10 @@ internal fun PlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 // The hand-off (releasing this stream before resolving the next
-                // episode) runs in composition, where it can reach the player.
-                if (playbackState == Player.STATE_ENDED && nextEpisode != null && !nextPromptDismissed && !nextStarted) {
+                // episode) runs in composition, where it can reach the player. A
+                // stream with nothing after it is caught by the auto-exit effect
+                // instead, which is why this is set unconditionally.
+                if (playbackState == Player.STATE_ENDED) {
                     endOfMediaReached = true
                 }
             }
@@ -2988,6 +3052,18 @@ internal fun PlayerScreen(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        // The clock stays up for the whole of playback: the control row hides after
+        // five seconds, and a viewer checking the time should not have to wake it.
+        val clockMs = rememberWallClockMs()
+        Text(
+            formatWallClock(clockMs),
+            color = Color.White,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            style = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 8f)),
+            modifier = Modifier.align(Alignment.TopEnd).padding(end = 28.dp, top = 20.dp),
+        )
         if (chromeVisible) {
             Box(
                 Modifier.fillMaxSize().background(
@@ -3044,6 +3120,12 @@ internal fun PlayerScreen(
                     Spacer(Modifier.height(8.dp))
                 }
                 if (playbackDuration > 0L) {
+                    // Directly above the seek bar: what time this is over from where
+                    // the viewer is now, so they can decide whether to finish it.
+                    playbackFinishCaption(clockMs, playbackPosition, playbackDuration)?.let { caption ->
+                        Text(caption, color = Color(0xFFE0DCE6), fontSize = 14.sp, maxLines = 1)
+                        Spacer(Modifier.height(2.dp))
+                    }
                     Slider(
                         value = (playbackPosition.toFloat() / playbackDuration.toFloat()).coerceIn(0f, 1f),
                         onValueChange = { fraction ->

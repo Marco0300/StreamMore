@@ -22,7 +22,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.core.app.ApplicationProvider
@@ -50,6 +54,17 @@ import kotlin.math.abs
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34], qualifiers = "w960dp-h540dp-xhdpi-notouch")
 class ScreenshotTest {
+
+    /** A 24 hour wall clock, as the corner of the screen renders it. */
+    private val clockPattern = Regex("^([01]\\d|2[0-3]):[0-5]\\d$")
+
+    /**
+     * Matches any node whose text is a wall clock, so the assertion does not depend
+     * on what the minute happens to be while the suite runs.
+     */
+    private val clockMatcher = SemanticsMatcher("shows a HH:mm clock") { node ->
+        node.config.getOrNull(SemanticsProperties.Text)?.any { clockPattern.matches(it.text) } == true
+    }
 
     @get:Rule
     val compose = createAndroidComposeRule<ComponentActivity>()
@@ -206,6 +221,132 @@ class ScreenshotTest {
             Fake.episodes[1].copy(progress = 1.0, watched = true, positionMs = 600_000L),
         )
         DetailScreen(Fake.tvDetail, watchedEpisodes, null, { }, { }, { }, { _, _ -> }, { }, { }, { })
+    }
+
+    /**
+     * The detail page has to answer "what time is this over" for the title Play
+     * would start: a resumed movie from its saved position, and a series from the
+     * episode Resume opens. Asserted on the composed nodes, so the wording is
+     * checked rather than only the pixels.
+     */
+    @Test
+    fun detailMovieFinishTime() {
+        val resumed = Fake.movieDetail.copy(resumePositionMs = 70 * 60_000L)
+        compose.setContent {
+            AppFrame {
+                DetailScreen(resumed, emptyList(), null, { }, { }, { }, { _, _ -> }, { }, { }, { })
+            }
+        }
+        compose.waitForIdle()
+        writePng("28-detail-movie-ends-at", capture())
+        assertTextPresent("Ends at", substring = true)
+        // 167 minutes of film with 70 minutes watched leaves 97, whenever this runs.
+        assertTextPresent("1h 37m left", substring = true)
+        assertClockPresent()
+    }
+
+    @Test
+    fun detailTvFinishTime() {
+        compose.setContent {
+            AppFrame {
+                DetailScreen(Fake.tvDetail, Fake.episodes, null, { }, { }, { }, { _, _ -> }, { }, { }, { })
+            }
+        }
+        compose.waitForIdle()
+        writePng("29-detail-tv-ends-at", capture())
+        assertTextPresent("Ends at", substring = true)
+        // Season 1's first episode carries a 41 minute runtime.
+        assertTextPresent("41m left", substring = true)
+    }
+
+    @Test
+    fun everySectionShowsTheClockInTheCorner() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) { HomeScreen(rows = Fake.rows, onCard = { }) }
+            }
+        }
+        compose.waitForIdle()
+        writePng("30-shell-clock", capture())
+        assertClockPresent()
+    }
+
+    /**
+     * Where the new labels land, in pixels, on a 1920x1080 (960x540dp) panel. A
+     * label that is composed but painted off the screen or under another row would
+     * pass a text assertion, so the geometry is checked too.
+     */
+    @Test
+    fun theClockAndFinishTimeSitInsideTheSafeArea() {
+        val resumed = Fake.movieDetail.copy(resumePositionMs = 70 * 60_000L)
+        compose.setContent {
+            AppFrame {
+                DetailScreen(resumed, emptyList(), null, { }, { }, { }, { _, _ -> }, { }, { }, { })
+            }
+        }
+        compose.waitForIdle()
+
+        val caption = compose.onAllNodesWithText("Ends at", substring = true, useUnmergedTree = true)
+            .fetchSemanticsNodes().single().boundsInRoot
+        val clock = compose.onAllNodes(clockMatcher, useUnmergedTree = true)
+            .fetchSemanticsNodes().single().boundsInRoot
+        val playButton = compose.onAllNodesWithText("Play", substring = true, useUnmergedTree = true)
+            .fetchSemanticsNodes().first().boundsInRoot
+        println("GEOMETRY caption=$caption clock=$clock playButton=$playButton")
+
+        check(caption.left >= 0f && caption.top >= 0f && caption.right <= 1920f && caption.bottom <= 1080f) {
+            "the finish-time caption must be fully on screen: $caption"
+        }
+        check(caption.top >= playButton.bottom) {
+            "the finish-time caption must sit under the action row: caption=$caption play=$playButton"
+        }
+        check(clock.top <= 120f && clock.right >= 1920f - 240f) {
+            "the clock belongs in the top-right corner: $clock"
+        }
+        check(clock.bottom <= caption.top) {
+            "the clock must not reach down into the caption: clock=$clock caption=$caption"
+        }
+    }
+
+    /**
+     * The playback screen's clock, rendered from the real [PlayerScreen] (ExoPlayer
+     * and all) with nothing touched: the control row hides itself after five
+     * seconds, and the clock deliberately is not part of that row.
+     */
+    @Test
+    fun thePlayerKeepsTheClockOnScreenWithoutInput() {
+        compose.setContent {
+            AppFrame {
+                PlayerScreen(
+                    // A closed port: playback fails immediately, which is fine — this
+                    // is about what the screen draws before any media arrives.
+                    source = "http://127.0.0.1:1/never-plays.m3u8",
+                    title = "Dune: Part Two",
+                    subtitles = emptyList(),
+                    cookie = null,
+                    onBack = { },
+                )
+            }
+        }
+        compose.waitForIdle()
+        writePng("31-player-clock", capture())
+        assertClockPresent()
+        // The seek bar and its finish time belong to the control row, which is hidden
+        // until the viewer wakes it.
+        val captions = compose.onAllNodesWithText("Ends at", substring = true, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        check(captions.isEmpty()) { "the control row should start hidden, and the caption with it" }
+    }
+
+    private fun assertTextPresent(text: String, substring: Boolean = false) {
+        val nodes = compose.onAllNodesWithText(text, substring = substring, useUnmergedTree = true)
+            .fetchSemanticsNodes()
+        check(nodes.isNotEmpty()) { "expected the composed screen to show \"$text\"" }
+    }
+
+    private fun assertClockPresent() {
+        val nodes = compose.onAllNodes(clockMatcher, useUnmergedTree = true).fetchSemanticsNodes()
+        check(nodes.isNotEmpty()) { "expected an HH:mm clock on the screen" }
     }
 
     @Test
@@ -554,6 +695,14 @@ internal object Fake {
     )
 
     val episodes = (1..6).map {
-        Episode(it, "Episode $it: A Reasonably Long Episode Title For Testing", null, null)
+        Episode(
+            it,
+            "Episode $it: A Reasonably Long Episode Title For Testing",
+            null,
+            null,
+            // The season route has always sent a per-episode runtime; the finish
+            // time on the detail page is derived from it.
+            runtime = 40 + it,
+        )
     }
 }

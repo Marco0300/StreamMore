@@ -117,6 +117,9 @@ class StreammoreApi(
                         progress?.doubleOrNull("duration"),
                         fraction,
                     ) ?: 0L,
+                    // The season route has always sent a per-episode runtime (the
+                    // browser renders it as "43m"); the finish time needs it too.
+                    runtime = e.intOrNull("runtime"),
                 )
             }
         }

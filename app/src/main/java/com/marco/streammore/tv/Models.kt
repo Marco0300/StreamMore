@@ -84,6 +84,8 @@ data class Episode(
     val progress: Double = 0.0,
     val watched: Boolean = false,
     val positionMs: Long = 0L,
+    /** TMDB's runtime for this episode in minutes; null when it is not published. */
+    val runtime: Int? = null,
 )
 
 data class NextEpisodeInfo(
