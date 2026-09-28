@@ -126,15 +126,17 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Streammore TV v${{ env.TAG_VERSION }}
-          generate_release_notes: true
+          generate_release_notes: false
           body: |
-            Streammore TV v${{ env.TAG_VERSION }}
+            ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
+
+            - Added live search suggestions as you type, using the existing Streammore search API.
+            - Split results into separate, compact Movies and TV Shows rows.
+            - Kept focus in the search field while suggestions refresh, so typing can continue uninterrupted.
 
             SHA-256: `${{ env.SHA256 }}`
 
-            The TV updater reads the release list and takes the newest release that
-            carries a `Streammore-TV-*.apk` asset, so a phone release published later
-            cannot hide this one.
+            The TV updater selects the newest release carrying a `Streammore-TV-*.apk` asset.
           files: ${{ env.ASSET_PATH }}
           fail_on_unmatched_files: true
 

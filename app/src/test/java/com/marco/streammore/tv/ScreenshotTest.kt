@@ -25,8 +25,13 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertIsFocused
+import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.core.app.ApplicationProvider
@@ -179,8 +184,47 @@ class ScreenshotTest {
     @Test
     fun search() = shot("06-search") {
         AppShell(TvScreen.Search, { }, Fake.profiles[0]) {
-            SearchScreen(Fake.cards(6), { }) { }
+            SearchScreen(onCard = { }) { Fake.cards(6) }
         }
+    }
+
+    @Test
+    fun searchUpdatesSuggestionsAsYouTypeWithoutStealingFocus() {
+        val requestedQueries = mutableListOf<String>()
+        val matches = listOf(
+            MediaCard(mediaType = "movie", tmdbId = 1, title = "Dune"),
+            MediaCard(mediaType = "tv", tmdbId = 2, title = "The Bear"),
+        )
+        compose.mainClock.autoAdvance = false
+        compose.setContent {
+            AppFrame {
+                SearchScreen(onCard = { }, onSearch = { query ->
+                    requestedQueries += query
+                    matches
+                })
+            }
+        }
+        val input = compose.onNode(hasSetTextAction())
+        input.performClick()
+        input.performTextInput("Du")
+        compose.mainClock.advanceTimeBy(500)
+        compose.waitForIdle()
+
+        check(requestedQueries == listOf("Du")) { "expected a live search for the current text; got $requestedQueries" }
+        input.assertIsFocused()
+        val moviesHeading = compose.onNodeWithText("Movies", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val movieTitle = compose.onNodeWithText("Dune", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val showsHeading = compose.onNodeWithText("TV Shows", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val showTitle = compose.onNodeWithText("The Bear", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val screenHeight = compose.activity.resources.displayMetrics.heightPixels.toFloat()
+        check(
+            moviesHeading.top < showsHeading.top && movieTitle.top < showsHeading.top &&
+                showsHeading.bottom < showTitle.top && showTitle.bottom <= screenHeight,
+        ) {
+            "both result categories must have a visible, separate row: Movies=$moviesHeading Dune=$movieTitle TV Shows=$showsHeading The Bear=$showTitle screenHeight=$screenHeight"
+        }
+        input.assertIsFocused()
+        writePng("06-search-live", capture())
     }
 
     @Test

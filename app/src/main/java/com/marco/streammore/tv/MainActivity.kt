@@ -73,6 +73,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -85,6 +86,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -213,6 +215,8 @@ internal val StreammoreScheme = darkColorScheme(
 private val Gutter = 48.dp
 internal val PosterWidth = 124.dp
 internal val PosterHeight = 186.dp
+private val SearchPosterWidth = 84.dp
+private val SearchPosterHeight = 126.dp
 /** Space between tiles in a row or grid. */
 internal val TileGap = 16.dp
 /** Continue Watching tiles are 16:9 stills, not posters. */
@@ -765,7 +769,13 @@ internal fun StreammoreTvApp() {
                             onLongCard = { contextCard = it },
                         )
                     }
-                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { SearchScreen(cards, ::openDetail, { contextCard = it }) { query -> scope.launch { profileId?.let { id -> loading = true; runCatching { api.search(query, id) }.onSuccess { cards = it }.onFailure { error = it.message }; loading = false } } } }
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                        SearchScreen(
+                            onCard = ::openDetail,
+                            onLongCard = { contextCard = it },
+                            onSearch = { query -> profileId?.let { id -> api.search(query, id) } ?: emptyList() },
+                        )
+                    }
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
                     TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
                     TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
@@ -1985,30 +1995,148 @@ internal fun GridScreen(
 
 @Composable
 internal fun SearchScreen(
-    cards: List<MediaCard>,
     onCard: (MediaCard) -> Unit,
     onLongCard: (MediaCard) -> Unit = {},
-    onSearch: (String) -> Unit,
+    onSearch: suspend (String) -> List<MediaCard>,
 ) {
-    var query by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                query, { query = it },
-                label = { Text("Search titles") },
-                singleLine = true,
-                modifier = Modifier.width(420.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Button({ onSearch(query) }, enabled = query.isNotBlank()) { Text("Search") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var results by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
+    var searching by remember { mutableStateOf(false) }
+    var debouncing by remember { mutableStateOf(false) }
+    var searchError by remember { mutableStateOf<String?>(null) }
+    val searchFocus = remember { FocusRequester() }
+    val currentSearch by rememberUpdatedState(onSearch)
+
+    LaunchedEffect(searchFocus) {
+        withFrameNanos { }
+        runCatching { searchFocus.requestFocus() }
+    }
+    LaunchedEffect(query) {
+        val term = query.trim()
+        results = emptyList()
+        searching = false
+        searchError = null
+        if (term.isEmpty()) {
+            debouncing = false
+            return@LaunchedEffect
         }
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = PosterWidth),
-            contentPadding = PaddingValues(vertical = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(TileGap),
-            verticalArrangement = Arrangement.spacedBy(TileGap),
+
+        debouncing = true
+        delay(300)
+        debouncing = false
+        searching = true
+        try {
+            results = currentSearch(term)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            searchError = failure.message ?: "Search failed. Try again."
+        }
+        searching = false
+    }
+
+    val movies = results.filter { it.mediaType.equals("movie", ignoreCase = true) }
+    val shows = results.filter {
+        it.mediaType.equals("tv", ignoreCase = true) || it.mediaType.equals("series", ignoreCase = true)
+    }
+    val searchingNow = searching || debouncing
+
+    Column(Modifier.fillMaxSize()) {
+        OutlinedTextField(
+            query,
+            { query = it },
+            label = { Text("Search titles") },
+            singleLine = true,
+            modifier = Modifier.padding(start = Gutter, top = 12.dp)
+                .width(420.dp)
+                .focusRequester(searchFocus)
+                .testTag("search-input"),
+        )
+        if (query.isNotBlank()) {
+            if (searchError != null) {
+                Text(searchError!!, color = Muted, modifier = Modifier.padding(horizontal = Gutter, vertical = 8.dp))
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f).testTag("search-results"),
+                contentPadding = PaddingValues(vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                item(key = "search-movies") {
+                    SearchResultsRow("Movies", movies, searchingNow, onCard, onLongCard)
+                }
+                item(key = "search-shows") {
+                    SearchResultsRow("TV Shows", shows, searchingNow, onCard, onLongCard)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultsRow(
+    title: String,
+    cards: List<MediaCard>,
+    searching: Boolean,
+    onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth().padding(horizontal = Gutter)) {
+        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(8.dp))
+        if (cards.isEmpty()) {
+            Text(
+                if (searching) "Searching…" else "No matches",
+                color = Muted,
+                modifier = Modifier.padding(vertical = 12.dp),
+            )
+        } else {
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+                items(cards, key = { "${it.mediaType}:${it.tmdbId}" }) { card ->
+                    SearchSuggestionCard(card, onCard, onLongCard)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchSuggestionCard(
+    card: MediaCard,
+    onCard: (MediaCard) -> Unit,
+    onLongCard: (MediaCard) -> Unit,
+) {
+    Column(Modifier.width(SearchPosterWidth)) {
+        TvCard(
+            onClick = { onCard(card) },
+            modifier = Modifier.fillMaxWidth(),
+            onLongClick = { onLongCard(card) },
         ) {
-            items(cards) { MediaCardView(it, onCard, Modifier, onLongCard) }
+            Box {
+                AsyncImage(
+                    model = card.poster ?: card.backdrop,
+                    contentDescription = card.title,
+                    modifier = Modifier.fillMaxWidth().height(SearchPosterHeight),
+                    contentScale = ContentScale.Crop,
+                )
+                card.ribbon?.let { Box(Modifier.align(Alignment.TopStart)) { Ribbon(it) } }
+                if (card.percent > 0.0) {
+                    Box(Modifier.align(Alignment.BottomCenter)) { WatchProgress(card.percent) }
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            card.title,
+            color = TextPrimary,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        val subtitle = card.sub?.takeIf { it.isNotBlank() }
+            ?: listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · ")
+        if (subtitle.isNotBlank()) {
+            Text(subtitle, color = Muted, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
