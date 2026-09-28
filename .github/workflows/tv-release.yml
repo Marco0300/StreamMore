@@ -74,10 +74,18 @@ jobs:
           set -euo pipefail
           sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
           test -n "$sdk" || { echo 'Android SDK location is unknown'; exit 1; }
-          aapt="$(find "$sdk/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -1)"
-          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
-          test -x "$aapt" || { echo "aapt not found under $sdk/build-tools"; exit 1; }
-          test -x "$apksigner" || { echo "apksigner not found under $sdk/build-tools"; exit 1; }
+          # Prefer the build-tools this workflow installs. A runner image can carry a
+          # newer set, and 'sort -V | tail -1' then verifies with tools nobody pinned.
+          if [ -d "$sdk/build-tools/35.0.0" ]; then
+            tools="$sdk/build-tools/35.0.0"
+          else
+            tools="$(find "$sdk/build-tools" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)"
+          fi
+          aapt="$tools/aapt"
+          apksigner="$tools/apksigner"
+          test -x "$aapt" || { echo "aapt not found under $tools"; exit 1; }
+          test -x "$apksigner" || { echo "apksigner not found under $tools"; exit 1; }
+          echo "verifying with: $tools"
           tag_version="${TAG_NAME#v}"
           apk='app/build/outputs/apk/release/app-release.apk'
           test -f "$apk" || { echo "Release APK is missing: $apk"; exit 1; }
@@ -88,7 +96,13 @@ jobs:
             exit 1
           fi
           "$apksigner" verify --verbose "$apk"
-          signer="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          # Read the fingerprint by shape, not by label: apksigner's wording has moved
+          # between build-tools versions, and an unmatched label used to look exactly
+          # like a wrong signer.
+          certs="$("$apksigner" verify --print-certs "$apk")"
+          printf '%s\n' "$certs"
+          signer="$(printf '%s\n' "$certs" | grep -i 'sha-256' | grep -oiE '[0-9a-f]{64}' | head -1 | tr 'A-Z' 'a-z')"
+          test -n "$signer" || { echo 'No SHA-256 fingerprint in apksigner --print-certs output'; exit 1; }
           if [ "$signer" != "$EXPECTED_SIGNER_SHA256" ]; then
             echo 'Signer does not match the key the installed app was signed with,'
             echo 'so this APK would not install over it. Check which keystore was used.'
