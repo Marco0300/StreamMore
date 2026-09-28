@@ -1,0 +1,119 @@
+name: Streammore TV Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build and publish signed TV APK
+    runs-on: ubuntu-latest
+    env:
+      # The TV project is the repository root; mobile/ is a sibling directory and
+      # is not part of this Gradle build (settings.gradle.kts includes only :app).
+      KEYSTORE_PATH: ${{ github.workspace }}/streammore-release.keystore
+      # The certificate the installed app already carries. An APK signed with any
+      # other key cannot install over it, so the build fails rather than publish.
+      EXPECTED_SIGNER_SHA256: 8a4c7dbc400d44d0726937b076cd1a6ce7f5d425a55309bee1273764afb2c4a4
+
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+
+      - name: Decode the TV release keystore
+        # The TV keystore is its own secret: never the phone client's, whose key
+        # would produce an APK that cannot upgrade an installed TV.
+        env:
+          KEYSTORE_BASE64: ${{ secrets.STREAMMORE_TV_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$KEYSTORE_BASE64" || { echo 'Missing STREAMMORE_TV_KEYSTORE_BASE64'; exit 1; }
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          chmod 600 "$KEYSTORE_PATH"
+
+      - name: Run unit test suite
+        run: ./gradlew testDebugUnitTest lintDebug --no-daemon
+
+      - name: Build signed release
+        env:
+          STREAMMORE_RELEASE_KEYSTORE: ${{ env.KEYSTORE_PATH }}
+          STREAMMORE_RELEASE_STORE_PASSWORD: ${{ secrets.STREAMMORE_TV_STORE_PASSWORD }}
+          STREAMMORE_RELEASE_KEY_PASSWORD: ${{ secrets.STREAMMORE_TV_KEY_PASSWORD }}
+        run: |
+          test -n "$STREAMMORE_RELEASE_STORE_PASSWORD" || { echo 'Missing STREAMMORE_TV_STORE_PASSWORD'; exit 1; }
+          test -n "$STREAMMORE_RELEASE_KEY_PASSWORD" || { echo 'Missing STREAMMORE_TV_KEY_PASSWORD'; exit 1; }
+          ./gradlew assembleRelease lintRelease --no-daemon
+
+      - name: Verify version, signer, and digest
+        id: artifact
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk" || { echo 'Android SDK location is unknown'; exit 1; }
+          aapt="$(find "$sdk/build-tools" -maxdepth 2 -type f -name aapt | sort -V | tail -1)"
+          apksigner="$(find "$sdk/build-tools" -maxdepth 2 -type f -name apksigner | sort -V | tail -1)"
+          test -x "$aapt" || { echo "aapt not found under $sdk/build-tools"; exit 1; }
+          test -x "$apksigner" || { echo "apksigner not found under $sdk/build-tools"; exit 1; }
+          tag_version="${TAG_NAME#v}"
+          apk='app/build/outputs/apk/release/app-release.apk'
+          test -f "$apk" || { echo "Release APK is missing: $apk"; exit 1; }
+          apk_version="$("$aapt" dump badging "$apk" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p" | head -1)"
+          test -n "$apk_version" || { echo 'Could not read versionName from the APK'; exit 1; }
+          if [ "$tag_version" != "$apk_version" ]; then
+            echo "Tag version $tag_version does not match APK version $apk_version"
+            exit 1
+          fi
+          "$apksigner" verify --verbose "$apk"
+          signer="$("$apksigner" verify --print-certs "$apk" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -1)"
+          if [ "$signer" != "$EXPECTED_SIGNER_SHA256" ]; then
+            echo 'Signer does not match the key the installed app was signed with,'
+            echo 'so this APK would not install over it. Check which keystore was used.'
+            printf 'expected %s\nactual   %s\n' "$EXPECTED_SIGNER_SHA256" "$signer"
+            exit 1
+          fi
+          asset="Streammore-TV-v${apk_version}-release.apk"
+          cp "$apk" "$asset"
+          digest="$(sha256sum "$asset" | awk '{print $1}')"
+          printf 'TAG_VERSION=%s\n' "$apk_version" >> "$GITHUB_ENV"
+          printf 'ASSET_PATH=%s\n' "$asset" >> "$GITHUB_ENV"
+          printf 'SHA256=%s\n' "$digest" >> "$GITHUB_ENV"
+          printf 'SHA-256: %s\n' "$digest" > release-digest.txt
+          printf 'signer=%s\ndigest=%s\n' "$signer" "$digest" >> "$GITHUB_STEP_SUMMARY"
+          printf '## Streammore TV v%s\n\n- signer: `%s`\n- SHA-256: `%s`\n' \
+            "$apk_version" "$signer" "$digest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: Streammore TV v${{ env.TAG_VERSION }}
+          generate_release_notes: true
+          body: |
+            Streammore TV v${{ env.TAG_VERSION }}
+
+            SHA-256: `${{ env.SHA256 }}`
+
+            The TV updater reads the release list and takes the newest release that
+            carries a `Streammore-TV-*.apk` asset, so a phone release published later
+            cannot hide this one.
+          files: ${{ env.ASSET_PATH }}
+          fail_on_unmatched_files: true
