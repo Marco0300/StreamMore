@@ -41,6 +41,15 @@ internal fun isEndOfMediaFailure(
     return durationMs - position <= windowMs
 }
 
+/**
+ * True when nothing follows this stream, so the player should hand the viewer back
+ * to the page that started playback instead of sitting on a finished frame. A movie
+ * and a series' final episode qualify. A trailer and a Live TV channel carry no media
+ * type and keep the player, and an episode with one after it is advanced instead.
+ */
+internal fun shouldExitWhenFinished(mediaType: String?, hasNextEpisode: Boolean): Boolean =
+    mediaType != null && !hasNextEpisode
+
 private val PERMANENT_REASON_MARKERS = listOf(
     "not-indexed",
     "unsupported-content-kind",

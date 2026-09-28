@@ -61,6 +61,18 @@ class PlaybackRecoveryTest {
     }
 
     @Test
+    fun aFinishedStreamExitsOnlyWhenNothingFollowsIt() {
+        // A movie, and a series' final episode, go back to the page they started from.
+        assertTrue(shouldExitWhenFinished("movie", hasNextEpisode = false))
+        assertTrue(shouldExitWhenFinished("tv", hasNextEpisode = false))
+        // An episode with one after it is advanced instead of exited.
+        assertFalse(shouldExitWhenFinished("tv", hasNextEpisode = true))
+        assertFalse(shouldExitWhenFinished("movie", hasNextEpisode = true))
+        // A trailer and a Live TV channel carry no media type and keep the player.
+        assertFalse(shouldExitWhenFinished(null, hasNextEpisode = false))
+    }
+
+    @Test
     fun failureMessagesTellTheViewerWhatToDo() {
         val capacity = resolveFailureMessage("all-accounts-at-capacity")
         assertTrue(capacity.contains("busy", ignoreCase = true))

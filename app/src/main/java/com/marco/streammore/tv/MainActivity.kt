@@ -940,7 +940,7 @@ internal fun StreammoreTvApp() {
                         // Nothing follows a movie, or a series' last episode, so the
                         // player returns to this detail page when it ends. Trailers and
                         // Live TV carry no media type and keep the player.
-                        autoExitWhenFinished = current.mediaType != null && current.nextEpisode == null,
+                        autoExitWhenFinished = shouldExitWhenFinished(current.mediaType, current.nextEpisode != null),
                     )
                 }
                 }
