@@ -1,0 +1,98 @@
+[
+  {
+    "tag_name": "v1.18.2",
+    "name": "Streammore TV v1.18.2",
+    "draft": false,
+    "prerelease": false,
+    "body": "Streammore TV now answers the questions a viewer actually asks at three metres: what time is it, and what time will this be over.\n\nThe detail page for a movie or a show shows when Play would finish (\"Ends at 21:45 - 1h 32m left\"), taken from the saved resume position for a film and from the episode Resume would open for a series. The per-episode runtime it needs was already in the season payload the browser renders as \"43m\"; the native client simply never read it, so this needed no server change. The player shows the same line above the seek bar, from the duration Media3 actually reports for the stream, and it follows the position as the viewer seeks. A clock sits in the top right of every section, of the detail page, and of the player, where it stays up while the control row hides itself after five seconds.\n\nPlayback also stops being a dead end. A movie, or a series with nothing after the episode, returns to the page that started it when the stream ends. That includes the early provider close Xtream serves on finished files - a network or container error in the closing window of a title whose duration is known - which never reaches STATE_ENDED and previously left the viewer staring at an error banner after a film that had genuinely finished. The final progress write still lands first, so the title is marked finished. Trailers and Live TV carry no media type and keep the player.\n\nVerified on the JVM: 73 unit tests pass, including 17 pinning the finish-time arithmetic and the episode the detail page would start, plus rendered-screen assertions for the labels. On a 1920x1080 render the caption sits at y 666-714px, below the action row, and the clock at x 1714-1800, y 52-100px, so neither is off-screen or overlapping. The player's clock is asserted present with no input, from the real PlayerScreen.\n",
+    "assets": [
+      {
+        "name": "Streammore-TV-v1.18.2-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 12057561,
+        "digest": "sha256:c3824adcf03628179abc3b0ce2f6716d06e33c09d39954a242bee8b29d9b55de",
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/v1.18.2/Streammore-TV-v1.18.2-release.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.18.1",
+    "name": "Streammore TV v1.18.1",
+    "draft": false,
+    "prerelease": false,
+    "body": "Fixes the profile avatars on the profile picker. An avatar is a text glyph (emoji or initial) inside a fixed-size circle, and an emoji line box is far taller than the glyph itself: the card wrapped that height instead of centring it, so the glyph sat in the top half of the disc and covered only about 30% of it. The line box is now collapsed to the glyph and the glyph is scaled against the circle - measured on the rendered screen, the glyph went from 95x86px and 90px above centre to 236x222px and 1-4px from centre, filling 78% of the disc. A screenshot assertion covers the centring and the fill, and fails on the old rendering.",
+    "assets": [
+      {
+        "name": "Streammore-TV-v1.18.1-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 12057561,
+        "digest": "sha256:5a3c0a208578eaff0a42ebb38da606f84fafdf358f91d0d2f468e619cc709a45",
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/v1.18.1/Streammore-TV-v1.18.1-release.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "mobile-v1.0.7",
+    "name": "Streammore Mobile v1.0.7",
+    "draft": false,
+    "prerelease": false,
+    "body": "Streammore Mobile v1.0.7\n\nSHA-256: `847d165fbcd905dff757e30e52f869a026f3fbb23505a7bc2bb2556ad8a4a049`\n\n\n**Full Changelog**: https://github.com/Marco0300/StreamMore/compare/v1.18.1...mobile-v1.0.7",
+    "assets": [
+      {
+        "name": "Streammore-Mobile-1.0.7-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 12061661,
+        "digest": "sha256:847d165fbcd905dff757e30e52f869a026f3fbb23505a7bc2bb2556ad8a4a049",
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/mobile-v1.0.7/Streammore-Mobile-1.0.7-release.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "v1.18.0",
+    "name": "Streammore TV v1.18.0",
+    "draft": false,
+    "prerelease": false,
+    "body": "Android TV visual pass for ten-foot viewing. The focused tile now draws a purple brand ring with a lift and shadow (the white ring stays on primary buttons), and its row mates step back so it is easy to find. Text is larger throughout: row titles 22sp, card titles 14sp, meta 12.5sp, nav 15sp. Posters grow to 124x186 and the gutter to 48dp for overscan-safe margins. Continue Watching now uses 16:9 episode stills with an episode tag, progress bar and a '25m left' caption, and Live TV tiles show NOW / NEXT with a programme progress bar from the guide.",
+    "assets": [
+      {
+        "name": "Streammore-TV-v1.18.0-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 12057561,
+        "digest": "sha256:7a97734794d803a2282fbe2f37311abd16d30de6d2eda744a54785ab8207d93a",
+        "browser_download_url": "https://github.com/Marco0300/StreamMore/releases/download/v1.18.0/Streammore-TV-v1.18.0-release.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "v9.9.9",
+    "name": "Streammore TV v9.9.9",
+    "draft": true,
+    "prerelease": false,
+    "body": "Synthetic draft release: never offered to a viewer.",
+    "assets": [
+      {
+        "name": "Streammore-TV-v9.9.9-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 1,
+        "digest": "sha256:00",
+        "browser_download_url": "https://example.invalid/Streammore-TV-v9.9.9-release.apk"
+      }
+    ]
+  },
+  {
+    "tag_name": "v9.9.8",
+    "name": "Streammore TV v9.9.8",
+    "draft": false,
+    "prerelease": true,
+    "body": "Synthetic prerelease: never offered to a viewer.",
+    "assets": [
+      {
+        "name": "Streammore-TV-v9.9.8-release.apk",
+        "content_type": "application/vnd.android.package-archive",
+        "size": 1,
+        "digest": "sha256:00",
+        "browser_download_url": "https://example.invalid/Streammore-TV-v9.9.8-release.apk"
+      }
+    ]
+  }
+]

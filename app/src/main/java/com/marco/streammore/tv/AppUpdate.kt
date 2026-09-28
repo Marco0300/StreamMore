@@ -8,14 +8,14 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.MessageDigest
 
 private const val GITHUB_RELEASES_URL =
-    "https://api.github.com/repos/Marco0300/StreamMore/releases/latest"
+    "https://api.github.com/repos/Marco0300/StreamMore/releases?per_page=100"
 private const val UPDATE_USER_AGENT = "Streammore-TV/${BuildConfig.VERSION_NAME}"
 
 internal data class AppUpdate(
@@ -25,16 +25,86 @@ internal data class AppUpdate(
     val releaseNotes: String,
 )
 
+internal data class TvReleaseCandidate(
+    val versionName: String,
+    val assetName: String,
+    val downloadUrl: String,
+    val sha256: String?,
+    val releaseNotes: String,
+    val draft: Boolean = false,
+    val prerelease: Boolean = false,
+)
+
+/**
+ * The phone app publishes into the same repository, so the asset name is the only
+ * thing that says which client a build belongs to. Selecting by tag alone lets a
+ * phone release become "latest" and stall this updater: the foreign tag parses as
+ * version 0.0.0, which is never newer than what is installed.
+ */
+internal fun isTvApkAsset(name: String): Boolean =
+    name.endsWith(".apk", ignoreCase = true) && name.contains("tv", ignoreCase = true)
+
+internal fun normalizeTvReleaseVersion(tag: String): String =
+    tag.removePrefix("tv-").removePrefix("v").removeSuffix("-tv")
+
+private fun versionParts(value: String): List<Int> = value
+    .removePrefix("v")
+    .split('.', '-', '+')
+    .take(3)
+    .map { it.toIntOrNull() ?: 0 }
+    .let { it + List(3 - it.size) { 0 } }
+
+private fun compareVersionNames(left: String, right: String): Int {
+    val leftParts = versionParts(left)
+    val rightParts = versionParts(right)
+    for (index in leftParts.indices) {
+        val comparison = leftParts[index].compareTo(rightParts[index])
+        if (comparison != 0) return comparison
+    }
+    return 0
+}
+
+/**
+ * The newest published build of *this* client: non-draft, non-prerelease, carrying
+ * a TV APK. Pick by version among the matching releases rather than by publish
+ * order, because the phone client interleaves its releases into the same list.
+ */
+internal fun selectLatestTvRelease(releases: List<TvReleaseCandidate>): TvReleaseCandidate? =
+    releases
+        .filter { !it.draft && !it.prerelease && isTvApkAsset(it.assetName) }
+        .maxWithOrNull(Comparator { left, right -> compareVersionNames(left.versionName, right.versionName) })
+
 internal fun isNewerVersion(latest: String, current: String): Boolean {
-    fun parts(value: String): List<Int> = value
-        .removePrefix("v")
-        .split('.', '-', '+')
-        .take(3)
-        .map { it.toIntOrNull() ?: 0 }
-        .let { it + List(3 - it.size) { 0 } }
-    return parts(latest).zip(parts(current)).firstOrNull { it.first != it.second }?.let {
+    return versionParts(latest).zip(versionParts(current)).firstOrNull { it.first != it.second }?.let {
         it.first > it.second
     } ?: false
+}
+
+internal fun parseTvReleaseCandidates(payload: String): List<TvReleaseCandidate> {
+    val releases = JSONArray(payload)
+    return buildList {
+        for (index in 0 until releases.length()) {
+            val release = releases.optJSONObject(index) ?: continue
+            val assets = release.optJSONArray("assets") ?: continue
+            val apk = (0 until assets.length())
+                .mapNotNull { assets.optJSONObject(it) }
+                .firstOrNull { isTvApkAsset(it.optString("name")) }
+                ?: continue
+            val version = normalizeTvReleaseVersion(release.optString("tag_name"))
+            if (version.isBlank()) continue
+            add(
+                TvReleaseCandidate(
+                    versionName = version,
+                    assetName = apk.optString("name"),
+                    downloadUrl = apk.optString("browser_download_url"),
+                    sha256 = apk.optString("digest").removePrefix("sha256:").ifBlank { null },
+                    releaseNotes = release.optString("body").trim(),
+                    draft = release.optBoolean("draft"),
+                    prerelease = release.optBoolean("prerelease"),
+                ),
+            )
+        }
+    }
 }
 
 internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.IO) {
@@ -50,20 +120,15 @@ internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.I
         if (connection.responseCode !in 200..299) {
             throw IllegalStateException("GitHub update check failed (${connection.responseCode})")
         }
-        val release = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
-        if (release.optBoolean("draft") || release.optBoolean("prerelease")) return@withContext null
-        val version = release.optString("tag_name").removePrefix("v")
-        if (version.isBlank() || !isNewerVersion(version, BuildConfig.VERSION_NAME)) return@withContext null
-        val assets = release.optJSONArray("assets") ?: return@withContext null
-        val apk = (0 until assets.length())
-            .map { assets.getJSONObject(it) }
-            .firstOrNull { it.optString("name").endsWith(".apk", ignoreCase = true) }
-            ?: return@withContext null
+        val release = selectLatestTvRelease(
+            parseTvReleaseCandidates(connection.inputStream.bufferedReader().use { it.readText() }),
+        ) ?: return@withContext null
+        if (!isNewerVersion(release.versionName, BuildConfig.VERSION_NAME)) return@withContext null
         AppUpdate(
-            versionName = version,
-            downloadUrl = apk.getString("browser_download_url"),
-            sha256 = apk.optString("digest").removePrefix("sha256:").ifBlank { null },
-            releaseNotes = release.optString("body").trim(),
+            versionName = release.versionName,
+            downloadUrl = release.downloadUrl,
+            sha256 = release.sha256,
+            releaseNotes = release.releaseNotes,
         )
     } finally {
         connection.disconnect()
