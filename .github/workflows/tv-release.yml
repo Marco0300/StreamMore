@@ -128,9 +128,10 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Replaced the Search text tab with a magnifying-glass icon between My List and the profile control.
-            - Moved profile switching into the profile menu to give the main navigation more room.
-            - Added a persistent active-page marker that is distinct from the D-pad focus outline.
+            - Redesigned the home screen with a left navigation rail and featured title hero.
+            - Added separate Trending Shows and Trending Movies shelves, followed by New Releases and Coming Soon.
+            - Restored a visible purple outline around the currently focused content card for D-pad navigation.
+            - Removed Viewing Activity from the TV navigation and preserved the selected menu item when returning from cards.
 
             SHA-256: `${{ env.SHA256 }}`
 

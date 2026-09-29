@@ -303,24 +303,6 @@ class StreammoreApi(
         parseRows(body.optJSONArray("rows") ?: JSONArray())
     }
 
-    suspend fun activity(profileId: String): List<ActivityEntry> = withContext(Dispatchers.IO) {
-        val body = get("/api/activity?profileId=${enc(profileId)}")
-        val values = body.optJSONArray("items") ?: JSONArray()
-        List(values.length()) {
-            val item = values.getJSONObject(it)
-            ActivityEntry(
-                mediaType = item.optString("mediaType", "movie"),
-                tmdbId = item.optInt("tmdbId"),
-                title = item.optString("title", "Untitled"),
-                poster = item.optString("poster", null),
-                percent = item.optDouble("percent", 0.0),
-                season = if (item.has("season") && !item.isNull("season")) item.optInt("season") else null,
-                episode = if (item.has("episode") && !item.isNull("episode")) item.optInt("episode") else null,
-                updatedAt = if (item.has("updatedAt") && !item.isNull("updatedAt")) item.optLong("updatedAt") else null,
-            )
-        }
-    }
-
     suspend fun liveChannels(profileId: String): List<LiveChannel> = withContext(Dispatchers.IO) {
         val body = get("/api/livetv/channels?profileId=${enc(profileId)}")
         val values = body.optJSONArray("channels") ?: JSONArray()

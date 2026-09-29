@@ -249,17 +249,6 @@ data class LiveEvent(
     val channelIds: List<String> = emptyList(),
 )
 
-data class ActivityEntry(
-    val mediaType: String,
-    val tmdbId: Int,
-    val title: String,
-    val poster: String? = null,
-    val percent: Double = 0.0,
-    val season: Int? = null,
-    val episode: Int? = null,
-    val updatedAt: Long? = null,
-)
-
 internal fun genreNamesFrom(values: List<String?>): List<String> =
     values.filterNotNull().filter { it.isNotBlank() }
 

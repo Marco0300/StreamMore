@@ -11,7 +11,7 @@ API and Flyx retrieval URLs.
 Set the service address in `app/build.gradle.kts` if needed:
 
 ```text
-http://192.168.3.91:3896
+http://192.168.3.221:3896
 ```
 
 Build a debug APK:

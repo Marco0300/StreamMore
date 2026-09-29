@@ -20,21 +20,31 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.semantics.SemanticsActions
+
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextInput
+
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.test.core.app.ApplicationProvider
@@ -158,7 +168,7 @@ class ScreenshotTest {
 
     @Test
     fun loginError() = shot("02-login-error") {
-        LoginScreen(loading = false, error = "Cannot reach Streammore backend at http://192.168.3.91:3896: Connection refused") { _, _ -> }
+        LoginScreen(loading = false, error = "Cannot reach Streammore backend at http://192.168.3.221:3896: Connection refused") { _, _ -> }
     }
 
     @Test
@@ -193,10 +203,24 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
 
-        compose.onNodeWithTag("active-tab-indicator-movies").fetchSemanticsNode()
+        compose.onNodeWithTag("active-tab-indicator-movies", useUnmergedTree = true).fetchSemanticsNode()
         check(compose.onAllNodesWithTag("active-tab-indicator-search").fetchSemanticsNodes().isEmpty()) {
             "the Search tab must not be marked active on the Movies screen"
         }
+    }
+
+    @Test
+    fun activeSidebarMarkerUsesThePurpleBrandAccent() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    Text("Home body", color = TextPrimary)
+                }
+            }
+        }
+        compose.waitForIdle()
+        val purple = purplePixels(capture())
+        check(purple > 40) { "the active Home marker should use the purple brand accent; found $purple purple pixels" }
     }
 
     @Test
@@ -225,29 +249,61 @@ class ScreenshotTest {
     }
 
     @Test
-    fun searchIsAnIconBetweenMyListAndProfileAndOpensSearch() {
+    fun searchIsAtTheTopOfTheSidebarAndOpensSearch() {
         val destinations = mutableListOf<TvScreen>()
         compose.setContent {
             AppFrame {
-                AppShell(TvScreen.Search, { destinations += it }, Fake.profiles[0]) { }
+                AppShell(TvScreen.Search, { destinations += it }, Fake.profiles[0]) {
+                    Text("Page content", color = TextPrimary, modifier = Modifier.testTag("page-content"))
+                }
             }
         }
         compose.waitForIdle()
 
         check(compose.onAllNodesWithText("Search", substring = false).fetchSemanticsNodes().isEmpty()) {
-            "Search should be an icon, not a text tab"
+            "Search should be an icon, not a text label"
         }
         val search = compose.onNodeWithContentDescription("Search")
-        val myListBounds = compose.onNodeWithText("My List").fetchSemanticsNode().boundsInRoot
         val searchBounds = search.fetchSemanticsNode().boundsInRoot
-        val profileBounds = compose.onNodeWithContentDescription("Profile menu").fetchSemanticsNode().boundsInRoot
-        check(myListBounds.right < searchBounds.left && searchBounds.right < profileBounds.left) {
-            "expected Search to be between My List and the profile control: My List=$myListBounds Search=$searchBounds Profile=$profileBounds"
+        val homeBounds = compose.onNodeWithContentDescription("Home").fetchSemanticsNode().boundsInRoot
+        val contentBounds = compose.onNodeWithTag("page-content").fetchSemanticsNode().boundsInRoot
+        check(searchBounds.top < homeBounds.top && searchBounds.right < contentBounds.left) {
+            "expected Search at the top of the left rail beside page content: Search=$searchBounds Home=$homeBounds Content=$contentBounds"
         }
-        compose.onNodeWithTag("active-tab-indicator-search").fetchSemanticsNode()
-        writePng("33-search-nav-icon", capture())
+        compose.onNodeWithTag("active-tab-indicator-search", useUnmergedTree = true).fetchSemanticsNode()
+        writePng("33-search-sidebar", capture())
         search.performClick()
         check(destinations == listOf(TvScreen.Search)) { "expected icon click to open Search: $destinations" }
+    }
+
+    @Test
+    fun homeShowsAFeaturedHeroAndTrendingShelfInTheSidebarLayout() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    HomeScreen(
+                        rows = listOf(Fake.rows[1]),
+                        billboard = Fake.billboard,
+                        autoplayPreviews = false,
+                        onCard = { },
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        val kicker = compose.onNodeWithText("SERIES", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val title = compose.onNodeWithText("Reacher", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val play = compose.onNodeWithText("▶ Play", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val moreInfo = compose.onNodeWithText("More info", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val trending = compose.onNodeWithText("Trending Now", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        check(kicker.top < title.top && title.bottom < play.top && play.bottom < trending.top) {
+            "hero hierarchy should lead into the trending shelf: kicker=$kicker title=$title play=$play trending=$trending"
+        }
+        check(play.left < moreInfo.left && moreInfo.top == play.top) {
+            "Play and More info should form a single horizontal action row: Play=$play MoreInfo=$moreInfo"
+        }
+        writePng("34-home-sidebar-featured", capture())
     }
 
     @Test
@@ -311,10 +367,73 @@ class ScreenshotTest {
     }
 
     @Test
-    fun activity() = shot("09-activity") {
-        AppShell(TvScreen.Activity, { }, Fake.profiles[0]) {
-            ActivityScreen(Fake.activity)
+    fun viewingActivityIsRemovedFromTheSidebar() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    Text("Home content", color = TextPrimary)
+                }
+            }
         }
+        compose.waitForIdle()
+        check(compose.onAllNodesWithContentDescription("Activity").fetchSemanticsNodes().isEmpty()) {
+            "Viewing Activity should no longer be a sidebar destination"
+        }
+        check(compose.onAllNodesWithText("Viewing activity", substring = true).fetchSemanticsNodes().isEmpty()) {
+            "Viewing Activity should no longer be shown as a page"
+        }
+    }
+
+    @Test
+    fun focusedSidebarItemShowsItsNameOnlyWhileFocused() {
+        var moveFocus: (FocusDirection) -> Boolean = { false }
+        compose.setContent {
+            AppFrame {
+                val focusManager = LocalFocusManager.current
+                SideEffect { moveFocus = focusManager::moveFocus }
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    MediaCardView(
+                        Fake.cards(1).first().copy(ribbon = null),
+                        onClick = { },
+                        modifier = Modifier.testTag("right-side-card"),
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Movies")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Movies").assertIsFocused()
+        compose.onNodeWithTag("focused-nav-label", useUnmergedTree = true).fetchSemanticsNode()
+        check(compose.runOnIdle { moveFocus(FocusDirection.Right) }) {
+            "focus should move from the selected menu item into the cards"
+        }
+        compose.waitForIdle()
+        compose.onNodeWithTag("right-side-card").assertIsFocused()
+        val cardBounds = compose.onNodeWithTag("right-side-card").fetchSemanticsNode().boundsInRoot
+        val fullScreen = capture()
+        val cardImage = Bitmap.createBitmap(
+            fullScreen,
+            cardBounds.left.toInt(),
+            cardBounds.top.toInt(),
+            cardBounds.width.toInt().coerceAtLeast(1),
+            cardBounds.height.toInt().coerceAtLeast(1),
+        )
+        val cardRingPixels = purplePixels(cardImage)
+        check(cardRingPixels > 500) {
+            "the currently focused card must visibly draw the purple focus ring; found $cardRingPixels purple pixels"
+        }
+        check(compose.onAllNodesWithTag("focused-nav-label", useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            "the menu label should disappear as soon as focus leaves the sidebar"
+        }
+        check(compose.runOnIdle { moveFocus(FocusDirection.Left) }) {
+            "focus should return from the first card to the last selected menu item"
+        }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Movies").assertIsFocused()
+        compose.onNodeWithTag("focused-nav-label", useUnmergedTree = true).fetchSemanticsNode()
+        compose.onNodeWithText("Movies", useUnmergedTree = true).fetchSemanticsNode()
     }
 
     @Test
@@ -373,15 +492,28 @@ class ScreenshotTest {
     }
 
     @Test
-    fun everySectionShowsTheClockInTheCorner() {
+    fun debugBuildUsesTheConfiguredLanBackend() {
+        check(BuildConfig.STREAMMORE_BASE_URL == "http://192.168.3.221:3896") {
+            "TV debug builds should target the configured LAN Streammore service, got ${BuildConfig.STREAMMORE_BASE_URL}"
+        }
+    }
+
+    @Test
+    fun shellUsesSidebarWithoutGlobalTopClock() {
         compose.setContent {
             AppFrame {
-                AppShell(TvScreen.Home, { }, Fake.profiles[0]) { HomeScreen(rows = Fake.rows, onCard = { }) }
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    Text("Home content", color = TextPrimary, modifier = Modifier.testTag("home-content"))
+                }
             }
         }
         compose.waitForIdle()
-        writePng("30-shell-clock", capture())
-        assertClockPresent()
+        writePng("30-shell-sidebar", capture())
+
+        compose.onNodeWithTag("side-navigation-rail").fetchSemanticsNode()
+        check(compose.onAllNodes(clockMatcher, useUnmergedTree = true).fetchSemanticsNodes().isEmpty()) {
+            "the reference layout has no global clock in a crowded top header"
+        }
     }
 
     /**
@@ -466,6 +598,40 @@ class ScreenshotTest {
     }
 
     @Test
+    fun trendingScreenSeparatesShowsAndMoviesThenShowsReleasesAndComingSoon() {
+        val trendingShow = Fake.cards(3).first().copy(mediaType = "tv", title = "Trending show fixture")
+        val trendingMovie = Fake.cards(1).first().copy(mediaType = "movie", title = "Trending movie fixture")
+        val weeklyEpisode = Fake.cards(6).first().copy(mediaType = "tv", title = "Weekly episode fixture")
+        val release = Fake.cards(1).first().copy(mediaType = "movie", title = "New release fixture")
+        val upcoming = Fake.cards(2).first().copy(mediaType = "movie", title = "Coming soon fixture")
+        val newHotApiRows = listOf(
+            HomeRow("new-this-week", "New This Week", listOf(release)),
+            HomeRow("weekly-episodes", "New Episodes Every Week", listOf(weeklyEpisode)),
+            HomeRow("coming-soon", "Coming Soon", listOf(upcoming)),
+        )
+        val homeApiRows = listOf(
+            HomeRow("popular-movies", "Popular Movies", listOf(release)),
+            HomeRow("trending", "Trending Now", listOf(trendingShow, trendingMovie)),
+        )
+        val rows = newHotRowsWithTrending(newHotApiRows, homeApiRows)
+        compose.setContent {
+            AppFrame { NewHotScreen(rows, onCard = { }) }
+        }
+        compose.waitForIdle()
+
+        val sections = organizeNewHotRows(rows)
+        val expectedTitles = listOf("Trending Shows", "Trending Movies", "New Releases", "Coming Soon")
+        check(sections.map { it.title } == expectedTitles) {
+            "trending page sections must be shows, movies, releases, then coming soon: ${sections.map { it.title }}"
+        }
+        check(sections[0].items.map { it.title } == listOf("Trending show fixture"))
+        check(sections[1].items.map { it.title } == listOf("Trending movie fixture"))
+        check(sections[2].items.map { it.title } == listOf("New release fixture", "Weekly episode fixture"))
+        check(sections[3].items.map { it.title } == listOf("Coming soon fixture"))
+        expectedTitles.forEach { compose.onNodeWithText(it, useUnmergedTree = true).fetchSemanticsNode() }
+    }
+
+    @Test
     fun myList() = shot("13-mylist") {
         AppShell(TvScreen.MyList, { }, Fake.profiles[0]) {
             GridScreen("My List", Fake.cards(4), onCard = { })
@@ -478,7 +644,7 @@ class ScreenshotTest {
             Box(Modifier.fillMaxSize()) {
                 HomeScreen(rows = Fake.rows, onCard = { })
                 ErrorBanner(
-                    "Cannot reach Streammore backend at http://192.168.3.91:3896: Connection refused",
+                    "Cannot reach Streammore backend at http://192.168.3.221:3896: Connection refused",
                     Modifier.align(androidx.compose.ui.Alignment.BottomCenter),
                 )
             }
@@ -765,11 +931,6 @@ internal object Fake {
             ),
         )
     }
-
-    val activity = listOf(
-        ActivityEntry("movie", 693134, "Dune: Part Two", null, 0.42, null, null, null),
-        ActivityEntry("tv", 136315, "The Bear", null, 0.87, 3, 4, null),
-    )
 
     val movieDetail = TitleDetail(
         mediaType = "movie",

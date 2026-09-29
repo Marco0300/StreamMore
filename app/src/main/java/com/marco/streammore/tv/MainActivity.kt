@@ -29,10 +29,12 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -68,6 +70,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -76,6 +79,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -88,6 +92,9 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -107,6 +114,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -114,6 +122,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -224,9 +233,11 @@ private val SearchPosterHeight = 126.dp
 /** Space between tiles in a row or grid. */
 internal val TileGap = 16.dp
 /** Continue Watching tiles are 16:9 stills, not posters. */
-internal val StillWidth = 250.dp
+private val StillWidth = 250.dp
 internal val StillHeight = 141.dp
-private val NavHeight = 54.dp
+private val SideNavWidth = 64.dp
+private val SideNavAccent = Purple
+private val SideNavIdle = Color(0xFF8E8E8E)
 
 /**
  * How long the player shows the finished frame before auto-exiting to the page
@@ -258,7 +269,7 @@ internal sealed interface TvScreen {
     data object Search : TvScreen
     data object NewHot : TvScreen
     data object MyList : TvScreen
-    data object Activity : TvScreen
+
     data object Live : TvScreen
     data class Detail(val mediaType: String, val tmdbId: Int) : TvScreen
     data class Player(
@@ -286,6 +297,16 @@ internal sealed interface TvScreen {
     ) : TvScreen
 }
 
+private data class SideNavDestination(
+    val key: String,
+    val label: String,
+    val icon: Int,
+    val route: TvScreen,
+    val active: Boolean,
+)
+
+private val LocalSideNavReturnFocusRequester = staticCompositionLocalOf<FocusRequester?> { null }
+
 private fun routeStateKey(screen: TvScreen): String = when (screen) {
     TvScreen.Home -> "home"
     TvScreen.Profiles -> "profiles"
@@ -295,7 +316,7 @@ private fun routeStateKey(screen: TvScreen): String = when (screen) {
     TvScreen.Search -> "search"
     TvScreen.NewHot -> "new-hot"
     TvScreen.MyList -> "my-list"
-    TvScreen.Activity -> "activity"
+
     TvScreen.Live -> "live"
     is TvScreen.Detail -> "detail:${screen.mediaType}:${screen.tmdbId}"
     is TvScreen.Player -> "player"
@@ -332,7 +353,7 @@ internal fun StreammoreTvApp() {
     var detail by remember { mutableStateOf<TitleDetail?>(null) }
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
     var liveChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
-    var activity by remember { mutableStateOf<List<ActivityEntry>>(emptyList()) }
+
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
     // A failed next-episode resolve happens while the player is on screen, where
@@ -614,11 +635,20 @@ internal fun StreammoreTvApp() {
         profileId?.let { id -> loading = true; runCatching { api.myList(id) }.onSuccess { cards = it; myListKeys = it.map { card -> "${card.mediaType}:${card.tmdbId}" }.toSet(); screen = TvScreen.MyList }.onFailure { error = it.message }; loading = false }
     }
     fun loadNewHot() = scope.launch {
-        profileId?.let { id -> loading = true; runCatching { api.newHot(id) }.onSuccess { rows = it; screen = TvScreen.NewHot }.onFailure { error = it.message }; loading = false }
+        val id = profileId ?: return@launch
+        val cachedTrending = rows.filter { it.id == "trending" }
+        error = null
+        loading = true
+        runCatching {
+            val newHotRows = api.newHot(id)
+            val homeRows = cachedTrending.ifEmpty { api.home(id).rows.filter { it.id == "trending" } }
+            newHotRowsWithTrending(newHotRows, homeRows)
+        }
+            .onSuccess { rows = it; screen = TvScreen.NewHot }
+            .onFailure { error = it.message ?: "Could not load New & Hot" }
+        loading = false
     }
-    fun loadActivity() = scope.launch {
-        profileId?.let { id -> loading = true; runCatching { api.activity(id) }.onSuccess { activity = it; screen = TvScreen.Activity }.onFailure { error = it.message }; loading = false }
-    }
+
     fun cardKey(card: MediaCard): String = "${card.mediaType}:${card.tmdbId}"
     fun toggleCardList(card: MediaCard) = scope.launch {
         val id = profileId ?: return@launch
@@ -701,7 +731,7 @@ internal fun StreammoreTvApp() {
             is TvScreen.Browse -> loadCards(target.mediaType)
             TvScreen.MyList -> loadMyList()
             TvScreen.NewHot -> loadNewHot()
-            TvScreen.Activity -> loadActivity()
+
             TvScreen.Live -> loadLive()
             TvScreen.Search, TvScreen.Profiles -> screen = target
             else -> screen = target
@@ -782,7 +812,7 @@ internal fun StreammoreTvApp() {
                     }
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
                     TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
-                    TvScreen.Activity -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { ActivityScreen(activity) }
+
                     TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
                     is TvScreen.Detail -> {
                         val active = detail
@@ -1006,6 +1036,22 @@ internal fun StreammoreTvApp() {
 internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: Profile?, content: @Composable () -> Unit) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     val switchProfileFocus = remember { FocusRequester() }
+    val destinations = listOf(
+        SideNavDestination("search", "Search", R.drawable.ic_search, TvScreen.Search, screen is TvScreen.Search),
+        SideNavDestination("home", "Home", R.drawable.ic_nav_home, TvScreen.Home, screen is TvScreen.Home),
+        SideNavDestination("new-hot", "New & Hot", R.drawable.ic_nav_trending, TvScreen.NewHot, screen is TvScreen.NewHot),
+        SideNavDestination("tv-shows", "TV Shows", R.drawable.ic_nav_tv, TvScreen.Browse("tv"), screen is TvScreen.Browse && screen.mediaType == "tv"),
+        SideNavDestination("movies", "Movies", R.drawable.ic_nav_movies, TvScreen.Browse("movie"), screen is TvScreen.Browse && screen.mediaType == "movie"),
+        SideNavDestination("live-tv", "Live TV", R.drawable.ic_nav_live_tv, TvScreen.Live, screen is TvScreen.Live),
+        SideNavDestination("my-list", "My List", R.drawable.ic_nav_my_list, TvScreen.MyList, screen is TvScreen.MyList),
+    )
+    val navFocusRequesters = remember { destinations.associate { it.key to FocusRequester() } }
+    var lastFocusedNavKey by rememberSaveable {
+        mutableStateOf(destinations.firstOrNull { it.active }?.key ?: "home")
+    }
+    var focusedNavLabel by remember { mutableStateOf<String?>(null) }
+    var focusedNavCenterY by remember { mutableStateOf(128.dp) }
+    val returnFocusRequester = navFocusRequesters[lastFocusedNavKey] ?: navFocusRequesters.getValue("home")
     LaunchedEffect(profileMenuOpen) {
         if (profileMenuOpen) {
             repeat(4) {
@@ -1017,52 +1063,88 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
     BackHandler(enabled = profileMenuOpen) { profileMenuOpen = false }
     // Back from any section returns Home; only Back from Home leaves the app.
     BackHandler(enabled = screen !is TvScreen.Home && !profileMenuOpen) { navigate(TvScreen.Home) }
-    Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
-            Row(
+    Box(Modifier.fillMaxSize().background(Bg)) {
+        Row(Modifier.fillMaxSize()) {
+            Column(
                 Modifier
-                    .fillMaxWidth()
-                    .height(NavHeight)
-                    .background(Bg)
-                    .padding(horizontal = Gutter),
-                verticalAlignment = Alignment.CenterVertically,
+                    .width(SideNavWidth)
+                    .fillMaxHeight()
+                    .background(Color(0xFF050505))
+                    .testTag("side-navigation-rail"),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                Image(
-                    painter = painterResource(R.drawable.streammore_logo),
-                    contentDescription = "Streammore",
-                    modifier = Modifier.width(160.dp).height(54.dp),
-                    contentScale = ContentScale.Fit,
-                )
-                Spacer(Modifier.width(20.dp))
-                TopButton("Home", screen is TvScreen.Home) { navigate(TvScreen.Home) }
-                TopButton("TV Shows", screen is TvScreen.Browse && screen.mediaType == "tv") { navigate(TvScreen.Browse("tv")) }
-                TopButton("Movies", screen is TvScreen.Browse && screen.mediaType == "movie") { navigate(TvScreen.Browse("movie")) }
-                TopButton("New & Hot", screen is TvScreen.NewHot) { navigate(TvScreen.NewHot) }
-                TopButton("Live TV", screen is TvScreen.Live) { navigate(TvScreen.Live) }
-                TopButton("My List", screen is TvScreen.MyList) { navigate(TvScreen.MyList) }
-                Spacer(Modifier.weight(1f))
-                TopIconButton("Search", screen is TvScreen.Search, R.drawable.ic_search) { navigate(TvScreen.Search) }
-                Spacer(Modifier.width(8.dp))
-                ProfileMenuTrigger(profile, profileMenuOpen) { profileMenuOpen = true }
-                Spacer(Modifier.width(12.dp))
-                // The time of day sits in the corner on every section, so a viewer never
-                // has to leave what they are reading to check it.
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(top = 108.dp, bottom = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    destinations.forEach { destination ->
+                        SideNavButton(
+                            destination = destination,
+                            focusRequester = navFocusRequesters.getValue(destination.key),
+                            onFocusChange = { hasFocus ->
+                                if (hasFocus) {
+                                    lastFocusedNavKey = destination.key
+                                    focusedNavLabel = destination.label
+                                } else if (focusedNavLabel == destination.label) {
+                                    focusedNavLabel = null
+                                }
+                            },
+                            onFocusPosition = { focusedNavCenterY = it },
+                            onClick = {
+                                lastFocusedNavKey = destination.key
+                                navigate(destination.route)
+                            },
+                        )
+                    }
+                }
+                ProfileMenuTrigger(
+                    profile = profile,
+                    expanded = profileMenuOpen,
+                    modifier = Modifier.padding(bottom = 12.dp),
+                ) { profileMenuOpen = true }
+            }
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .testTag("main-app-content"),
+            ) {
+                CompositionLocalProvider(LocalSideNavReturnFocusRequester provides returnFocusRequester) {
+                    content()
+                }
+            }
+        }
+        focusedNavLabel?.let { label ->
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .offset(x = SideNavWidth - 4.dp, y = (focusedNavCenterY - 18.dp).coerceAtLeast(0.dp))
+                    .zIndex(2f)
+                    .testTag("focused-nav-label"),
+                color = Panel,
+                shape = RoundedCornerShape(6.dp),
+                border = BorderStroke(1.dp, SideNavAccent),
+                shadowElevation = 8.dp,
+            ) {
                 Text(
-                    rememberWallClock(),
+                    label,
                     color = TextPrimary,
-                    fontSize = 16.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 )
             }
-            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF222222)))
-            Box(Modifier.fillMaxSize()) { content() }
         }
         if (profileMenuOpen) {
             Surface(
                 modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(top = NavHeight - 1.dp, end = Gutter + 64.dp)
+                    .align(Alignment.BottomStart)
+                    .padding(start = SideNavWidth + 8.dp, bottom = 12.dp)
                     .widthIn(min = 230.dp, max = 280.dp)
                     .testTag("profile-menu-panel"),
                 color = Panel,
@@ -1102,126 +1184,103 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
 }
 
 @Composable
-internal fun TopButton(label: String, active: Boolean, onClick: () -> Unit) {
-    var focused by remember(label) { mutableStateOf(false) }
-    val tag = label.lowercase().replace("&", "and").replace(" ", "-")
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (active) Purple.copy(alpha = 0.14f) else Color.Transparent)
-                .border(
-                    width = if (focused) 2.dp else 0.dp,
-                    color = if (focused) BorderFocused else Color.Transparent,
-                    shape = RoundedCornerShape(8.dp),
-                )
-                .onFocusChanged { focused = it.isFocused || it.hasFocus }
-                .clickable(onClick = onClick)
-                .padding(horizontal = 8.dp, vertical = 5.dp),
-        ) {
-            Text(
-                label,
-                color = if (active) Color.White else Muted,
-                fontSize = 15.sp,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-                maxLines = 1,
+private fun SideNavButton(
+    destination: SideNavDestination,
+    focusRequester: FocusRequester,
+    onFocusChange: (Boolean) -> Unit,
+    onFocusPosition: (Dp) -> Unit,
+    onClick: () -> Unit,
+) {
+    var focused by remember(destination.key) { mutableStateOf(false) }
+    var centerY by remember(destination.key) { mutableStateOf(0.dp) }
+    val density = LocalDensity.current
+    Box(
+        Modifier
+            .size(40.dp)
+            .focusRequester(focusRequester)
+            .onGloballyPositioned { coordinates ->
+                centerY = with(density) {
+                    coordinates.positionInRoot().y.toDp() + coordinates.size.height.toDp() / 2
+                }
+                if (focused) onFocusPosition(centerY)
+            }
+            .onFocusChanged {
+                focused = it.isFocused
+                onFocusChange(focused)
+                if (focused) onFocusPosition(centerY)
+            }
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (destination.active) SideNavAccent.copy(alpha = 0.12f) else Color.Transparent)
+            .border(
+                width = if (focused) 2.dp else 0.dp,
+                color = if (focused) BorderFocused else Color.Transparent,
+                shape = RoundedCornerShape(8.dp),
             )
-        }
+            .semantics { contentDescription = destination.label }
+            .focusable()
+            .clickable(onClick = onClick)
+            .testTag("side-nav-item-${destination.key}"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            painter = painterResource(destination.icon),
+            contentDescription = null,
+            tint = if (destination.active) Color.White else SideNavIdle,
+            modifier = Modifier.size(20.dp).testTag("nav-icon-${destination.key}"),
+        )
         Box(
             Modifier
-                .padding(top = 2.dp)
-                .width(22.dp)
+                .align(Alignment.BottomCenter)
+                .width(18.dp)
                 .height(3.dp)
                 .clip(RoundedCornerShape(2.dp))
-                .background(if (active) Purple else Color.Transparent)
-                .then(if (active) Modifier.testTag("active-tab-indicator-$tag") else Modifier),
+                .background(if (destination.active) SideNavAccent else Color.Transparent)
+                .then(
+                    if (destination.active) Modifier.testTag("active-tab-indicator-${destination.key}")
+                    else Modifier
+                ),
         )
     }
 }
 
 @Composable
-private fun TopIconButton(label: String, active: Boolean, icon: Int, onClick: () -> Unit) {
-    var focused by remember(label) { mutableStateOf(false) }
-    val tag = label.lowercase().replace("&", "and").replace(" ", "-")
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(if (active) Purple.copy(alpha = 0.14f) else Color.Transparent)
-                .border(
-                    width = if (focused) 2.dp else 0.dp,
-                    color = if (focused) BorderFocused else Color.Transparent,
-                    shape = RoundedCornerShape(8.dp),
-                )
-                .onFocusChanged { focused = it.isFocused || it.hasFocus }
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painter = painterResource(icon),
-                contentDescription = label,
-                tint = if (active) Color.White else Muted,
-                modifier = Modifier.size(20.dp),
-            )
-        }
-        Box(
-            Modifier
-                .padding(top = 2.dp)
-                .width(22.dp)
-                .height(3.dp)
-                .clip(RoundedCornerShape(2.dp))
-                .background(if (active) Purple else Color.Transparent)
-                .then(if (active) Modifier.testTag("active-tab-indicator-$tag") else Modifier),
-        )
-    }
-}
-
-@Composable
-private fun ProfileMenuTrigger(profile: Profile?, expanded: Boolean, onClick: () -> Unit) {
+private fun ProfileMenuTrigger(
+    profile: Profile?,
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
     var focused by remember { mutableStateOf(false) }
     val avatar = profile?.avatar?.takeIf { it.isNotBlank() }
         ?: profile?.name?.take(1)?.uppercase()
         ?: "P"
     Box(
-        Modifier
-            .heightIn(min = 44.dp)
-            .semantics { contentDescription = "Profile menu" }
-            .onFocusChanged { focused = it.isFocused || it.hasFocus }
-            .clickable(onClick = onClick)
-            .clip(RoundedCornerShape(8.dp))
-            .background(if (expanded) Purple.copy(alpha = 0.14f) else Color.Transparent)
+        modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(if (expanded) SideNavAccent.copy(alpha = 0.16f) else Panel)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = when {
                     focused -> BorderFocused
-                    expanded -> Purple
+                    expanded -> SideNavAccent
                     else -> BorderIdle
                 },
-                shape = RoundedCornerShape(8.dp),
+                shape = CircleShape,
             )
-            .padding(horizontal = 8.dp, vertical = 5.dp),
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .semantics { contentDescription = "Profile menu" }
+            .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            Box(
-                Modifier
-                    .size(22.dp)
-                    .clip(CircleShape)
-                    .background(PanelFocused),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(avatar, color = TextPrimary, fontSize = 12.sp, maxLines = 1)
-            }
-            Text(
-                profile?.name ?: "Profile",
-                color = TextPrimary,
-                fontSize = 13.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.widthIn(max = 72.dp),
-            )
-            Text(if (expanded) "▴" else "▾", color = Muted, fontSize = 12.sp)
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(CircleShape)
+                .background(PanelFocused),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(avatar, color = TextPrimary, fontSize = 16.sp, maxLines = 1)
         }
     }
 }
@@ -1246,11 +1305,37 @@ internal fun TvCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val navReturnFocus = LocalSideNavReturnFocusRequester.current
+    var atContentLeftEdge by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
+    val navReturnModifier = if (navReturnFocus != null) {
+        Modifier
+            .onGloballyPositioned { coordinates ->
+                val leftEdgeLimit = with(density) { (SideNavWidth + Gutter + 12.dp).toPx() }
+                atContentLeftEdge = coordinates.positionInRoot().x <= leftEdgeLimit
+            }
+            .focusProperties {
+                if (atContentLeftEdge) left = navReturnFocus
+            }
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft && atContentLeftEdge) {
+                    navReturnFocus.requestFocus()
+                    true
+                } else {
+                    false
+                }
+            }
+            .focusable()
+    } else {
+        Modifier
+    }
     TvCardSurface(
         focused = focused,
         onClick = onClick,
         onLongClick = onLongClick,
-        modifier = modifier.onFocusChanged { focused = it.isFocused || it.hasFocus },
+        modifier = modifier
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .then(navReturnModifier),
         shape = shape,
         contentPadding = contentPadding,
         horizontalAlignment = horizontalAlignment,
@@ -1699,14 +1784,12 @@ internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (P
     }
 }
 
-private val HeroHeight = 350.dp
+private val HeroHeight = 410.dp
 
 /**
- * The home hero, mirroring the browser's billboard: full-bleed backdrop, title,
- * a match/year/HD/type line, a three-line overview and Play / More Info.
- *
- * After a beat the backdrop becomes a muted, looping trailer — the same embed and
- * the same 2600ms delay the browser uses.
+ * A full-bleed TV billboard: dynamic backdrop, cinematic title stack and two
+ * remote-focusable actions. The content remains driven by the backend's selected
+ * billboard; the screenshot's artwork/title are only the visual reference.
  */
 @Composable
 internal fun BillboardHero(
@@ -1721,7 +1804,6 @@ internal fun BillboardHero(
 ) {
     var trailerUrl by remember(billboard.tmdbId) { mutableStateOf<String?>(null) }
     LaunchedEffect(billboard.tmdbId, autoplayPreviews, trailerEnabled) {
-        // Leaving the hero tears the player down; the browser does the same on scroll.
         trailerUrl = null
         if (trailerEnabled && autoplayPreviews && !billboard.trailerKey.isNullOrBlank()) {
             delay(2600)
@@ -1729,7 +1811,7 @@ internal fun BillboardHero(
         }
     }
 
-    Box(Modifier.fillMaxWidth().height(HeroHeight)) {
+    Box(Modifier.fillMaxWidth().height(HeroHeight).testTag("featured-hero")) {
         AsyncImage(
             model = billboard.backdrop ?: billboard.poster,
             contentDescription = null,
@@ -1737,78 +1819,143 @@ internal fun BillboardHero(
             contentScale = ContentScale.Crop,
         )
         trailerUrl?.let { url -> HeroTrailer(url, Modifier.matchParentSize()) }
-        // The browser's two scrims: dark on the left for legible text, and a fade
-        // into the page background at the bottom so the rows below blend in.
         Box(
             Modifier.matchParentSize().background(
                 Brush.horizontalGradient(
-                    0.0f to Bg.copy(alpha = 0.92f),
-                    0.45f to Bg.copy(alpha = 0.55f),
-                    0.75f to Color.Transparent,
+                    0.0f to Bg.copy(alpha = 0.94f),
+                    0.42f to Bg.copy(alpha = 0.62f),
+                    0.76f to Color.Transparent,
                 ),
             ),
         )
         Box(
             Modifier.matchParentSize().background(
-                // Browser-equivalent bottom fade: keep the trailer visible through
-                // almost the whole hero and fade only the final 18% into the rows.
                 Brush.verticalGradient(0.82f to Color.Transparent, 1.0f to Bg),
             ),
         )
 
+        billboard.rating?.let { rating ->
+            Column(
+                Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = Gutter, bottom = 28.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(Color.Black.copy(alpha = 0.72f))
+                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(3.dp))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalAlignment = Alignment.Start,
+            ) {
+                Text("RATING", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                Text("${rating}/10", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
         Column(
             Modifier
                 .align(Alignment.BottomStart)
-                .padding(start = Gutter, end = Gutter, bottom = 28.dp)
-                .widthIn(max = 640.dp),
+                .padding(start = 32.dp, end = Gutter, bottom = 28.dp)
+                .widthIn(max = 610.dp),
         ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("S", color = SideNavAccent, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                Text(
+                    if (billboard.mediaType == "tv") "SERIES" else "FEATURED FILM",
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.4.sp,
+                )
+            }
+            Spacer(Modifier.height(2.dp))
             Text(
                 billboard.title,
                 color = Color.White,
-                fontSize = 52.sp,
-                lineHeight = 54.sp,
+                fontFamily = FontFamily.Serif,
+                fontSize = 50.sp,
+                lineHeight = 50.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                billboard.rating?.let {
-                    Text("${(it * 10).toInt()}% Match", color = MatchGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                }
-                billboard.year?.let { Text(it, color = MetaText, fontSize = 15.sp) }
+                billboard.year?.let { Text(it, color = Color.White, fontSize = 14.sp) }
                 Text(
                     "HD",
-                    color = MetaText,
-                    fontSize = 11.sp,
-                    modifier = Modifier.border(1.dp, BadgeBorder, RoundedCornerShape(2.dp)).padding(horizontal = 6.dp, vertical = 1.dp),
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(2.dp))
+                        .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
-                Text(if (billboard.mediaType == "tv") "Series" else "Film", color = MetaText, fontSize = 15.sp)
+                Text(if (billboard.mediaType == "tv") "TV Series" else "Movie", color = Color.White, fontSize = 14.sp)
             }
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 billboard.overview,
-                color = MetaText,
+                color = Color.White.copy(alpha = 0.94f),
                 fontSize = 15.sp,
-                lineHeight = 22.sp,
+                lineHeight = 21.sp,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
             )
-            Spacer(Modifier.height(20.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                TvButton(
-                    onClick = { onPlay(billboard) },
-                    modifier = if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier,
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                HeroActionButton(
+                    label = "Play",
                     primary = true,
+                    modifier = if (playFocus != null) Modifier.focusRequester(playFocus) else Modifier,
                     onFocusGained = onHeroFocus,
-                ) {
-                    Text("▶ Play", fontSize = 16.sp)
-                }
-                TvButton(onClick = { onMoreInfo(billboard) }, onFocusGained = onHeroFocus) {
-                    Text("ℹ More Info", color = TextPrimary, fontSize = 16.sp)
-                }
+                    onClick = { onPlay(billboard) },
+                )
+                HeroActionButton(
+                    label = "More info",
+                    primary = false,
+                    onFocusGained = onHeroFocus,
+                    onClick = { onMoreInfo(billboard) },
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun HeroActionButton(
+    label: String,
+    primary: Boolean,
+    modifier: Modifier = Modifier,
+    onFocusGained: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    var focused by remember(label) { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (focused) 1.05f else 1f, label = "heroButtonScale")
+    Box(
+        modifier
+            .height(42.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged {
+                val nowFocused = it.isFocused || it.hasFocus
+                if (nowFocused && !focused) onFocusGained?.invoke()
+                focused = nowFocused
+            }
+            .clip(RoundedCornerShape(4.dp))
+            .background(if (primary) Color.White else Color(0xFF4A4A4A))
+            .border(
+                width = if (focused) 2.dp else 0.dp,
+                color = if (focused) Color.White else Color.Transparent,
+                shape = RoundedCornerShape(4.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            if (primary) "▶ $label" else label,
+            color = if (primary) Color(0xFF111111) else Color.White,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
     }
 }
 
@@ -2309,6 +2456,47 @@ private fun SearchSuggestionCard(
     }
 }
 
+internal fun newHotRowsWithTrending(newHotRows: List<HomeRow>, homeRows: List<HomeRow>): List<HomeRow> =
+    newHotRows.filterNot { it.id == "trending" } + homeRows.filter { it.id == "trending" }
+
+internal fun organizeNewHotRows(rows: List<HomeRow>): List<HomeRow> {
+    fun categoryKey(row: HomeRow): String = "${row.id} ${row.title}".lowercase()
+    val trending = rows.filter { categoryKey(it).contains("trend") }
+    val explicitlyShows = trending.filter {
+        val key = categoryKey(it)
+        key.contains("show") || key.contains("series") || key.contains("tv")
+    }
+    val explicitlyMovies = trending.filter {
+        val key = categoryKey(it)
+        key.contains("movie") || key.contains("film")
+    }
+    val combinedTrending = trending.filterNot { it in explicitlyShows || it in explicitlyMovies }
+    fun uniqueCards(cards: List<MediaCard>) = cards.distinctBy { "${it.mediaType}:${it.tmdbId}" }
+
+    val shows = uniqueCards(
+        explicitlyShows.flatMap { it.items } + combinedTrending.flatMap { row -> row.items.filter { it.mediaType == "tv" } },
+    )
+    val movies = uniqueCards(
+        explicitlyMovies.flatMap { it.items } + combinedTrending.flatMap { row -> row.items.filter { it.mediaType == "movie" } },
+    )
+    val nonTrending = rows.filterNot { it in trending }
+    val releases = nonTrending.filter {
+        val key = categoryKey(it)
+        key.contains("new") || key.contains("release")
+    }.flatMap { it.items }
+    val comingSoon = nonTrending.filter {
+        val key = categoryKey(it)
+        key.contains("coming") || key.contains("soon")
+    }.flatMap { it.items }
+
+    return listOf(
+        HomeRow("trending-shows", "Trending Shows", shows),
+        HomeRow("trending-movies", "Trending Movies", movies),
+        HomeRow("new-releases", "New Releases", uniqueCards(releases)),
+        HomeRow("coming-soon", "Coming Soon", uniqueCards(comingSoon)),
+    )
+}
+
 @Composable
 internal fun NewHotScreen(
     rows: List<HomeRow>,
@@ -2316,45 +2504,19 @@ internal fun NewHotScreen(
     onLongCard: (MediaCard) -> Unit = {},
 ) {
     val firstCard = remember { FocusRequester() }
-    FocusFirstWhenReady(rows.any { it.items.isNotEmpty() }, firstCard)
+    val sections = remember(rows) { organizeNewHotRows(rows) }
+    FocusFirstWhenReady(sections.any { it.items.isNotEmpty() }, firstCard)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        rows.forEach { row -> RowSection(row.title, row.items, onCard, onLongCard, null) }
+        sections.forEachIndexed { index, row ->
+            RowSection(
+                row.title,
+                row.items,
+                onCard,
+                onLongCard,
+                firstCardRequester = if (index == 0) firstCard else null,
+            )
+        }
         Spacer(Modifier.height(16.dp))
-    }
-}
-
-@Composable
-internal fun ActivityScreen(items: List<ActivityEntry>) {
-    LazyColumn(
-        contentPadding = PaddingValues(horizontal = Gutter, vertical = 16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        item { Text("Viewing activity", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold) }
-        if (items.isEmpty()) {
-            item { Text("No viewing activity yet.", color = Muted, modifier = Modifier.padding(top = 12.dp)) }
-        }
-        items(items) { entry ->
-            Row(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Panel).padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                AsyncImage(
-                    entry.poster, entry.title,
-                    Modifier.width(52.dp).height(74.dp).clip(RoundedCornerShape(4.dp)),
-                    contentScale = ContentScale.Crop,
-                )
-                Column(Modifier.padding(start = 16.dp)) {
-                    Text(entry.title, color = TextPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        buildString {
-                            append("${(entry.percent * 100).toInt()}% watched")
-                            if (entry.season != null && entry.episode != null) append(" · S${entry.season} E${entry.episode}")
-                        },
-                        color = Muted, fontSize = 13.sp,
-                    )
-                }
-            }
-        }
     }
 }
 
