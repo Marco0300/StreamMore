@@ -38,6 +38,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentHeight
+
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -56,6 +57,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -101,6 +103,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -1000,61 +1004,225 @@ internal fun StreammoreTvApp() {
 
 @Composable
 internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: Profile?, content: @Composable () -> Unit) {
-    // Back from any section returns Home; only Back from Home leaves the app.
-    BackHandler(enabled = screen !is TvScreen.Home) { navigate(TvScreen.Home) }
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .height(NavHeight)
-                .background(Bg)
-                .padding(horizontal = Gutter),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Image(
-                painter = painterResource(R.drawable.streammore_logo),
-                contentDescription = "Streammore",
-                modifier = Modifier.width(160.dp).height(54.dp),
-                contentScale = ContentScale.Fit,
-            )
-            Spacer(Modifier.width(20.dp))
-            TopButton("Home", screen is TvScreen.Home) { navigate(TvScreen.Home) }
-            TopButton("TV Shows", screen is TvScreen.Browse && screen.mediaType == "tv") { navigate(TvScreen.Browse("tv")) }
-            TopButton("Movies", screen is TvScreen.Browse && screen.mediaType == "movie") { navigate(TvScreen.Browse("movie")) }
-            TopButton("Search", screen is TvScreen.Search) { navigate(TvScreen.Search) }
-            TopButton("New & Hot", screen is TvScreen.NewHot) { navigate(TvScreen.NewHot) }
-            TopButton("Live TV", screen is TvScreen.Live) { navigate(TvScreen.Live) }
-            TopButton("My List", screen is TvScreen.MyList) { navigate(TvScreen.MyList) }
-            Spacer(Modifier.weight(1f))
-            Text(profile?.name ?: "Profile", color = Muted, fontSize = 14.sp)
-            Spacer(Modifier.width(8.dp))
-            TextButton({ navigate(TvScreen.Profiles) }) { Text("Switch", color = TextPrimary, fontSize = 14.sp) }
-            Spacer(Modifier.width(20.dp))
-            // The time of day sits in the corner on every section, so a viewer never
-            // has to leave what they are reading to check it.
-            Text(
-                rememberWallClock(),
-                color = TextPrimary,
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-            )
+    var profileMenuOpen by remember { mutableStateOf(false) }
+    val switchProfileFocus = remember { FocusRequester() }
+    LaunchedEffect(profileMenuOpen) {
+        if (profileMenuOpen) {
+            repeat(4) {
+                withFrameNanos { }
+                runCatching { switchProfileFocus.requestFocus() }
+            }
         }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF222222)))
-        Box(Modifier.fillMaxSize()) { content() }
+    }
+    BackHandler(enabled = profileMenuOpen) { profileMenuOpen = false }
+    // Back from any section returns Home; only Back from Home leaves the app.
+    BackHandler(enabled = screen !is TvScreen.Home && !profileMenuOpen) { navigate(TvScreen.Home) }
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(NavHeight)
+                    .background(Bg)
+                    .padding(horizontal = Gutter),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.streammore_logo),
+                    contentDescription = "Streammore",
+                    modifier = Modifier.width(160.dp).height(54.dp),
+                    contentScale = ContentScale.Fit,
+                )
+                Spacer(Modifier.width(20.dp))
+                TopButton("Home", screen is TvScreen.Home) { navigate(TvScreen.Home) }
+                TopButton("TV Shows", screen is TvScreen.Browse && screen.mediaType == "tv") { navigate(TvScreen.Browse("tv")) }
+                TopButton("Movies", screen is TvScreen.Browse && screen.mediaType == "movie") { navigate(TvScreen.Browse("movie")) }
+                TopButton("New & Hot", screen is TvScreen.NewHot) { navigate(TvScreen.NewHot) }
+                TopButton("Live TV", screen is TvScreen.Live) { navigate(TvScreen.Live) }
+                TopButton("My List", screen is TvScreen.MyList) { navigate(TvScreen.MyList) }
+                Spacer(Modifier.weight(1f))
+                TopIconButton("Search", screen is TvScreen.Search, R.drawable.ic_search) { navigate(TvScreen.Search) }
+                Spacer(Modifier.width(8.dp))
+                ProfileMenuTrigger(profile, profileMenuOpen) { profileMenuOpen = true }
+                Spacer(Modifier.width(12.dp))
+                // The time of day sits in the corner on every section, so a viewer never
+                // has to leave what they are reading to check it.
+                Text(
+                    rememberWallClock(),
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                )
+            }
+            Box(Modifier.fillMaxWidth().height(1.dp).background(Color(0xFF222222)))
+            Box(Modifier.fillMaxSize()) { content() }
+        }
+        if (profileMenuOpen) {
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = NavHeight - 1.dp, end = Gutter + 64.dp)
+                    .widthIn(min = 230.dp, max = 280.dp)
+                    .testTag("profile-menu-panel"),
+                color = Panel,
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, Purple),
+                shadowElevation = 18.dp,
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("PROFILE", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                    Text(profile?.name ?: "Profile", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    var switchFocused by remember { mutableStateOf(false) }
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .focusRequester(switchProfileFocus)
+                            .onFocusChanged { switchFocused = it.isFocused || it.hasFocus }
+                            .focusable()
+                            .clickable {
+                                profileMenuOpen = false
+                                navigate(TvScreen.Profiles)
+                            }
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (switchFocused) Purple else PanelFocused)
+                            .border(
+                                width = if (switchFocused) 2.dp else 1.dp,
+                                color = if (switchFocused) BorderFocused else Purple,
+                                shape = RoundedCornerShape(8.dp),
+                            )
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        Text("Switch profile", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
     }
 }
 
 @Composable
 internal fun TopButton(label: String, active: Boolean, onClick: () -> Unit) {
-    TextButton(onClick) {
-        Text(
-            label,
-            color = if (active) Color.White else Muted,
-            fontSize = 15.sp,
-            fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
-            maxLines = 1,
+    var focused by remember(label) { mutableStateOf(false) }
+    val tag = label.lowercase().replace("&", "and").replace(" ", "-")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (active) Purple.copy(alpha = 0.14f) else Color.Transparent)
+                .border(
+                    width = if (focused) 2.dp else 0.dp,
+                    color = if (focused) BorderFocused else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .onFocusChanged { focused = it.isFocused || it.hasFocus }
+                .clickable(onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+        ) {
+            Text(
+                label,
+                color = if (active) Color.White else Muted,
+                fontSize = 15.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                maxLines = 1,
+            )
+        }
+        Box(
+            Modifier
+                .padding(top = 2.dp)
+                .width(22.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (active) Purple else Color.Transparent)
+                .then(if (active) Modifier.testTag("active-tab-indicator-$tag") else Modifier),
         )
+    }
+}
+
+@Composable
+private fun TopIconButton(label: String, active: Boolean, icon: Int, onClick: () -> Unit) {
+    var focused by remember(label) { mutableStateOf(false) }
+    val tag = label.lowercase().replace("&", "and").replace(" ", "-")
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier
+                .size(44.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (active) Purple.copy(alpha = 0.14f) else Color.Transparent)
+                .border(
+                    width = if (focused) 2.dp else 0.dp,
+                    color = if (focused) BorderFocused else Color.Transparent,
+                    shape = RoundedCornerShape(8.dp),
+                )
+                .onFocusChanged { focused = it.isFocused || it.hasFocus }
+                .clickable(onClick = onClick),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painter = painterResource(icon),
+                contentDescription = label,
+                tint = if (active) Color.White else Muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+        Box(
+            Modifier
+                .padding(top = 2.dp)
+                .width(22.dp)
+                .height(3.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(if (active) Purple else Color.Transparent)
+                .then(if (active) Modifier.testTag("active-tab-indicator-$tag") else Modifier),
+        )
+    }
+}
+
+@Composable
+private fun ProfileMenuTrigger(profile: Profile?, expanded: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val avatar = profile?.avatar?.takeIf { it.isNotBlank() }
+        ?: profile?.name?.take(1)?.uppercase()
+        ?: "P"
+    Box(
+        Modifier
+            .heightIn(min = 44.dp)
+            .semantics { contentDescription = "Profile menu" }
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .clickable(onClick = onClick)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (expanded) Purple.copy(alpha = 0.14f) else Color.Transparent)
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = when {
+                    focused -> BorderFocused
+                    expanded -> Purple
+                    else -> BorderIdle
+                },
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 8.dp, vertical = 5.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Box(
+                Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(PanelFocused),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(avatar, color = TextPrimary, fontSize = 12.sp, maxLines = 1)
+            }
+            Text(
+                profile?.name ?: "Profile",
+                color = TextPrimary,
+                fontSize = 13.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.widthIn(max = 72.dp),
+            )
+            Text(if (expanded) "▴" else "▾", color = Muted, fontSize = 12.sp)
+        }
     }
 }
 

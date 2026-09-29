@@ -29,6 +29,9 @@ import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
@@ -179,6 +182,72 @@ class ScreenshotTest {
         AppShell(TvScreen.Browse("movie"), { }, Fake.profiles[0]) {
             GridScreen("Movies", Fake.cards(18), onCard = { })
         }
+    }
+
+    @Test
+    fun currentTopLevelSectionHasAnActiveMarker() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Browse("movie"), { }, Fake.profiles[0]) { }
+            }
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("active-tab-indicator-movies").fetchSemanticsNode()
+        check(compose.onAllNodesWithTag("active-tab-indicator-search").fetchSemanticsNodes().isEmpty()) {
+            "the Search tab must not be marked active on the Movies screen"
+        }
+    }
+
+    @Test
+    fun switchProfileIsInsideTheFocusableProfileMenu() {
+        val destinations = mutableListOf<TvScreen>()
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Browse("movie"), { destinations += it }, Fake.profiles[0]) { }
+            }
+        }
+        compose.waitForIdle()
+
+        check(compose.onAllNodesWithText("Switch", substring = false).fetchSemanticsNodes().isEmpty()) {
+            "Switch should be available from the profile menu, not displayed as a separate nav item"
+        }
+        compose.onNodeWithContentDescription("Profile menu").performClick()
+        compose.mainClock.advanceTimeBy(100)
+        compose.waitForIdle()
+        val switchProfile = compose.onNodeWithText("Switch profile", substring = false)
+        switchProfile.fetchSemanticsNode()
+        switchProfile.assertIsFocused()
+        writePng("32-profile-menu", capture())
+        switchProfile.performClick()
+
+        check(destinations == listOf(TvScreen.Profiles)) { "expected Switch profile to navigate to profile selection: $destinations" }
+    }
+
+    @Test
+    fun searchIsAnIconBetweenMyListAndProfileAndOpensSearch() {
+        val destinations = mutableListOf<TvScreen>()
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Search, { destinations += it }, Fake.profiles[0]) { }
+            }
+        }
+        compose.waitForIdle()
+
+        check(compose.onAllNodesWithText("Search", substring = false).fetchSemanticsNodes().isEmpty()) {
+            "Search should be an icon, not a text tab"
+        }
+        val search = compose.onNodeWithContentDescription("Search")
+        val myListBounds = compose.onNodeWithText("My List").fetchSemanticsNode().boundsInRoot
+        val searchBounds = search.fetchSemanticsNode().boundsInRoot
+        val profileBounds = compose.onNodeWithContentDescription("Profile menu").fetchSemanticsNode().boundsInRoot
+        check(myListBounds.right < searchBounds.left && searchBounds.right < profileBounds.left) {
+            "expected Search to be between My List and the profile control: My List=$myListBounds Search=$searchBounds Profile=$profileBounds"
+        }
+        compose.onNodeWithTag("active-tab-indicator-search").fetchSemanticsNode()
+        writePng("33-search-nav-icon", capture())
+        search.performClick()
+        check(destinations == listOf(TvScreen.Search)) { "expected icon click to open Search: $destinations" }
     }
 
     @Test
