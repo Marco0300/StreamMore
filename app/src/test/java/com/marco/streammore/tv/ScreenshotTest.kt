@@ -384,6 +384,75 @@ class ScreenshotTest {
         }
     }
 
+    private fun verifyShelfFocusIsNotClipped(wide: Boolean) {
+        val card = Fake.cards(1).first().copy(title = "Edge fixture", ribbon = null)
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    RowSection("Edge shelf", listOf(card), onCard = { }, wide = wide)
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription(card.title)
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        val bitmap = capture()
+        writePng(if (wide) "edge-wide-focus" else "edge-poster-focus", bitmap)
+        val caption = compose.onNodeWithText(card.title).fetchSemanticsNode().boundsInRoot
+        val image = compose.onNodeWithContentDescription(card.title).fetchSemanticsNode().boundsInRoot
+        // The focus ring must be visible to the LEFT of the unscaled caption;
+        // a row starting at the card itself clips this strip entirely.
+        val density = compose.activity.resources.displayMetrics.density
+        val cardWidth = (if (wide) 250f else PosterWidth.value) * density
+        val x = (caption.left - cardWidth * 0.045f + 2).toInt()
+        val purple = (image.top.toInt() + 20 until image.bottom.toInt() - 20).count { y ->
+            val pixel = bitmap.getPixel(x, y)
+            Color.red(pixel) > 120 && Color.blue(pixel) > 180 && Color.green(pixel) < 150
+        }
+        check(purple > 20) { "focused ${if (wide) "wide" else "poster"} card's left border is clipped ($purple pixels)" }
+        val content = compose.onNodeWithTag("main-app-content").fetchSemanticsNode().boundsInRoot
+        check(caption.left - content.left <= 40f) { "menu-to-card gap is too large: ${caption.left - content.left}px" }
+        val viewport = compose.onNodeWithTag("shelf-viewport-Edge shelf").fetchSemanticsNode().boundsInRoot
+        check(abs(viewport.right - content.right) < 1f) { "a fixed right gutter still clips the shelf" }
+    }
+
+    @Test
+    fun posterShelfFocusHasUnclippedLeftBorder() = verifyShelfFocusIsNotClipped(false)
+
+    @Test
+    fun wideShelfFocusHasUnclippedLeftBorder() = verifyShelfFocusIsNotClipped(true)
+
+    @Test
+    fun newHotTopRowUpDoesNotRequestAnUnattachedHero() {
+        var moveFocus: (FocusDirection) -> Boolean = { false }
+        val card = Fake.cards(1).first().copy(mediaType = "tv", title = "Top trending fixture")
+        compose.setContent {
+            AppFrame {
+                val manager = LocalFocusManager.current
+                SideEffect { moveFocus = manager::moveFocus }
+                AppShell(TvScreen.NewHot, { }, Fake.profiles[0]) {
+                    NewHotScreen(listOf(HomeRow("trending", "Trending Now", listOf(card))), onCard = { })
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription(card.title)
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription(card.title).assertIsFocused()
+        repeat(5) {
+            compose.runOnIdle {
+                moveFocus(FocusDirection.Up)
+                val view = compose.activity.window.decorView
+                view.dispatchKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_DPAD_UP))
+                view.dispatchKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_DPAD_UP))
+            }
+            compose.waitForIdle()
+        }
+        compose.onNodeWithTag("main-app-content").fetchSemanticsNode()
+    }
+
     @Test
     fun sidebarFocusMovesDoNotRecomposeHomeContent() {
         var contentCompositions = 0

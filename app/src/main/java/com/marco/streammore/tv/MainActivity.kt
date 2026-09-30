@@ -2129,7 +2129,7 @@ internal fun HomeScreen(
                 items = row.items,
                 onCard = onCard,
                 onLongCard = onLongCard,
-                firstCardRequester = if (index == 0) heroPlayFocus else null,
+                firstCardRequester = if (index == 0 && billboard != null) heroPlayFocus else null,
                 // The backend marks the resume row with id "continue"; its items
                 // carry a 16:9 backdrop and a position, so they render as stills.
                 wide = row.id == "continue",
@@ -2148,15 +2148,26 @@ internal fun RowSection(
     firstCardRequester: FocusRequester? = null,
     /** Continue Watching style rows use 16:9 stills instead of posters. */
     wide: Boolean = false,
+    /** Initial focus belongs to a real card, independently of an optional UP target. */
+    initialCardRequester: FocusRequester? = null,
 ) {
     // Which tile owns focus in this row, so its siblings can step back slightly.
     // A focused card surrounded by equally bright cards is much harder to find.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
-    Column(Modifier.padding(horizontal = Gutter)) {
-        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(TileGap)) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp))
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().testTag("shelf-viewport-$title"),
+            // Content padding stays INSIDE the scrolling viewport, so enlarged
+            // first/last cards retain their rings without a fixed side gutter.
+            contentPadding = PaddingValues(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(TileGap),
+        ) {
             itemsIndexed(items) { index, item ->
+                val initialFocusModifier = if (index == 0 && initialCardRequester != null) {
+                    Modifier.focusRequester(initialCardRequester)
+                } else Modifier
                 val modifier = if (firstCardRequester != null) {
                     Modifier
                         .focusProperties { up = firstCardRequester }
@@ -2171,6 +2182,7 @@ internal fun RowSection(
                 } else {
                     Modifier
                 }
+                val cardModifier = initialFocusModifier.then(modifier)
                 val reportFocus: (Boolean) -> Unit = { focused ->
                     focusedIndex = when {
                         focused -> index
@@ -2180,9 +2192,9 @@ internal fun RowSection(
                 }
                 val dimmed = focusedIndex != null && focusedIndex != index
                 if (wide) {
-                    WideCardView(item, onCard, modifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
+                    WideCardView(item, onCard, cardModifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
                 } else {
-                    MediaCardView(item, onCard, modifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
+                    MediaCardView(item, onCard, cardModifier, onLongCard, onFocusChange = reportFocus, dimmed = dimmed)
                 }
             }
         }
@@ -2509,6 +2521,7 @@ internal fun NewHotScreen(
 ) {
     val firstCard = remember { FocusRequester() }
     val sections = remember(rows) { organizeNewHotRows(rows) }
+    val firstPopulatedSection = sections.indexOfFirst { it.items.isNotEmpty() }
     FocusFirstWhenReady(sections.any { it.items.isNotEmpty() }, firstCard)
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         sections.forEachIndexed { index, row ->
@@ -2517,7 +2530,7 @@ internal fun NewHotScreen(
                 row.items,
                 onCard,
                 onLongCard,
-                firstCardRequester = if (index == 0) firstCard else null,
+                initialCardRequester = if (index == firstPopulatedSection) firstCard else null,
             )
         }
         Spacer(Modifier.height(16.dp))

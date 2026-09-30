@@ -128,8 +128,10 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Removed unnecessary Home-screen recomposition when moving up or down the sidebar, reducing navigation hitches during trailer playback.
-            - Preserved focused menu labels, return-to-menu position, and the purple content-card focus outline.
+            - Fixed clipped focused movie, show, and Continue Watching cards.
+            - Reduced the gap beside the sidebar and extended shelves to the right edge without a fixed gutter.
+            - Fixed the New & Hot crash when pressing Up at the top of the screen by separating initial card focus from hero navigation.
+            - Preserved purple focus outlines and smooth sidebar navigation.
 
             SHA-256: `${{ env.SHA256 }}`
 
