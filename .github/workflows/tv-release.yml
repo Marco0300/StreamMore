@@ -128,10 +128,8 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Redesigned the home screen with a left navigation rail and featured title hero.
-            - Added separate Trending Shows and Trending Movies shelves, followed by New Releases and Coming Soon.
-            - Restored a visible purple outline around the currently focused content card for D-pad navigation.
-            - Removed Viewing Activity from the TV navigation and preserved the selected menu item when returning from cards.
+            - Removed unnecessary Home-screen recomposition when moving up or down the sidebar, reducing navigation hitches during trailer playback.
+            - Preserved focused menu labels, return-to-menu position, and the purple content-card focus outline.
 
             SHA-256: `${{ env.SHA256 }}`
 

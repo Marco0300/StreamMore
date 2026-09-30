@@ -305,7 +305,7 @@ private data class SideNavDestination(
     val active: Boolean,
 )
 
-private val LocalSideNavReturnFocusRequester = staticCompositionLocalOf<FocusRequester?> { null }
+private val LocalSideNavReturnFocusRequester = staticCompositionLocalOf<androidx.compose.runtime.State<FocusRequester>?> { null }
 
 private fun routeStateKey(screen: TvScreen): String = when (screen) {
     TvScreen.Home -> "home"
@@ -1051,7 +1051,11 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
     }
     var focusedNavLabel by remember { mutableStateOf<String?>(null) }
     var focusedNavCenterY by remember { mutableStateOf(128.dp) }
-    val returnFocusRequester = navFocusRequesters[lastFocusedNavKey] ?: navFocusRequesters.getValue("home")
+    // Keep the provided object stable: replacing a static composition local on
+    // each sidebar move invalidates the whole Home subtree, including its video.
+    val returnFocusRequester = rememberUpdatedState(
+        navFocusRequesters[lastFocusedNavKey] ?: navFocusRequesters.getValue("home"),
+    )
     LaunchedEffect(profileMenuOpen) {
         if (profileMenuOpen) {
             repeat(4) {
@@ -1315,11 +1319,11 @@ internal fun TvCard(
                 atContentLeftEdge = coordinates.positionInRoot().x <= leftEdgeLimit
             }
             .focusProperties {
-                if (atContentLeftEdge) left = navReturnFocus
+                if (atContentLeftEdge) left = navReturnFocus.value
             }
             .onPreviewKeyEvent { event ->
                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft && atContentLeftEdge) {
-                    navReturnFocus.requestFocus()
+                    navReturnFocus.value.requestFocus()
                     true
                 } else {
                     false

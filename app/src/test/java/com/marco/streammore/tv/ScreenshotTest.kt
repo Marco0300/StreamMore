@@ -385,6 +385,33 @@ class ScreenshotTest {
     }
 
     @Test
+    fun sidebarFocusMovesDoNotRecomposeHomeContent() {
+        var contentCompositions = 0
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    SideEffect { contentCompositions++ }
+                    MediaCardView(Fake.cards(1).first(), onClick = { })
+                }
+            }
+        }
+        compose.waitForIdle()
+        compose.onNodeWithContentDescription("Home")
+            .performSemanticsAction(SemanticsActions.RequestFocus)
+        compose.waitForIdle()
+        val baseline = contentCompositions
+        listOf("New & Hot", "TV Shows", "Movies", "TV Shows", "New & Hot", "Home").forEach { label ->
+            compose.onNodeWithContentDescription(label)
+                .performSemanticsAction(SemanticsActions.RequestFocus)
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription(label).assertIsFocused()
+            check(contentCompositions == baseline) {
+                "sidebar focus on $label recomposed Home content: $baseline -> $contentCompositions"
+            }
+        }
+    }
+
+    @Test
     fun focusedSidebarItemShowsItsNameOnlyWhileFocused() {
         var moveFocus: (FocusDirection) -> Boolean = { false }
         compose.setContent {
