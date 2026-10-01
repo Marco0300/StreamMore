@@ -195,6 +195,43 @@ class ScreenshotTest {
     }
 
     @Test
+    fun accountWithoutLiveTvDoesNotSeeTheNavigationOption() {
+        compose.setContent {
+            AppFrame {
+                AppShell(
+                    screen = TvScreen.Home,
+                    navigate = { },
+                    profile = Fake.profiles[0],
+                    showLiveTv = false,
+                ) {
+                    Text("Catalog")
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        check(compose.onAllNodesWithContentDescription("Live TV").fetchSemanticsNodes().isEmpty()) {
+            "Live TV must not appear in the navigation when the account package disables it"
+        }
+    }
+
+    @Test
+    fun accountWithLiveTvKeepsTheNavigationOption() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0], showLiveTv = true) {
+                    Text("Catalog")
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        check(compose.onAllNodesWithContentDescription("Live TV").fetchSemanticsNodes().size == 1) {
+            "Live TV must stay available when the account package enables it"
+        }
+    }
+
+    @Test
     fun currentTopLevelSectionHasAnActiveMarker() {
         compose.setContent {
             AppFrame {

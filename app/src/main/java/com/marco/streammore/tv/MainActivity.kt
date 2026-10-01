@@ -340,6 +340,9 @@ internal fun StreammoreTvApp() {
     var profileId by remember { mutableStateOf<String?>(null) }
     var rows by remember { mutableStateOf<List<HomeRow>>(emptyList()) }
     var billboard by remember { mutableStateOf<Billboard?>(null) }
+    // Effective Live TV entitlement supplied by the authenticated account package.
+    // Older server responses omit the flag, so preserve the historical enabled default.
+    var liveTvEnabled by remember { mutableStateOf(true) }
     var autoplayPreviews by remember { mutableStateOf(true) }
     var cards by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
     var myListKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -604,6 +607,10 @@ internal fun StreammoreTvApp() {
     }
 
     fun loadLive() = scope.launch {
+        if (!liveTvEnabled) {
+            screen = TvScreen.Home
+            return@launch
+        }
         val id = profileId ?: return@launch
         error = null
         screen = TvScreen.Live; loading = true
@@ -612,6 +619,10 @@ internal fun StreammoreTvApp() {
         loading = false
     }
     fun playLive(channel: LiveChannel) = scope.launch {
+        if (!liveTvEnabled) {
+            screen = TvScreen.Home
+            return@launch
+        }
         val id = profileId
         val playbackId = "${System.currentTimeMillis()}-live-${channel.channelId}"
         playerReturn = screen
@@ -739,7 +750,10 @@ internal fun StreammoreTvApp() {
     }
 
     LaunchedEffect(Unit) {
-        runCatching { api.me() }.onSuccess { loadProfiles() }
+        runCatching { api.me() }.onSuccess { response ->
+            liveTvEnabled = accountHasLiveTvAccess(response)
+            loadProfiles()
+        }
         runCatching { checkForAppUpdate() }
             .onSuccess { availableUpdate = it }
     }
@@ -749,7 +763,10 @@ internal fun StreammoreTvApp() {
             Box(Modifier.fillMaxSize()) {
                 routeStateHolder.SaveableStateProvider(routeStateKey(screen)) {
                     when (val current = screen) {
-                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { loadProfiles() }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
+                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { response ->
+                        liveTvEnabled = accountHasLiveTvAccess(response)
+                        loadProfiles()
+                    }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
                     TvScreen.Profiles -> ProfileScreen(profiles, error) { profile ->
                         if (profile.kids && profile.hasPin) {
                             pendingProfile = profile
@@ -769,7 +786,7 @@ internal fun StreammoreTvApp() {
                             }
                         }
                     }
-                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         HomeScreen(
                             rows = rows,
                             billboard = billboard,
@@ -787,7 +804,7 @@ internal fun StreammoreTvApp() {
                             },
                         )
                     }
-                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         BrowseScreen(
                             title = if (current.mediaType == "tv") "TV Shows" else "Movies",
                             cards = cards,
@@ -803,17 +820,17 @@ internal fun StreammoreTvApp() {
                             onLongCard = { contextCard = it },
                         )
                     }
-                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) {
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         SearchScreen(
                             onCard = ::openDetail,
                             onLongCard = { contextCard = it },
                             onSearch = { query -> profileId?.let { id -> api.search(query, id) } ?: emptyList() },
                         )
                     }
-                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
-                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
+                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
+                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
 
-                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
                     is TvScreen.Detail -> {
                         val active = detail
                         if (active == null) LoadingScreen(error) else DetailScreen(
@@ -1033,10 +1050,16 @@ internal fun StreammoreTvApp() {
 // ── Shell ────────────────────────────────────────────────────────────────────
 
 @Composable
-internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: Profile?, content: @Composable () -> Unit) {
+internal fun AppShell(
+    screen: TvScreen,
+    navigate: (TvScreen) -> Unit,
+    profile: Profile?,
+    showLiveTv: Boolean = true,
+    content: @Composable () -> Unit,
+) {
     var profileMenuOpen by remember { mutableStateOf(false) }
     val switchProfileFocus = remember { FocusRequester() }
-    val destinations = listOf(
+    val allDestinations = listOf(
         SideNavDestination("search", "Search", R.drawable.ic_search, TvScreen.Search, screen is TvScreen.Search),
         SideNavDestination("home", "Home", R.drawable.ic_nav_home, TvScreen.Home, screen is TvScreen.Home),
         SideNavDestination("new-hot", "New & Hot", R.drawable.ic_nav_trending, TvScreen.NewHot, screen is TvScreen.NewHot),
@@ -1045,7 +1068,8 @@ internal fun AppShell(screen: TvScreen, navigate: (TvScreen) -> Unit, profile: P
         SideNavDestination("live-tv", "Live TV", R.drawable.ic_nav_live_tv, TvScreen.Live, screen is TvScreen.Live),
         SideNavDestination("my-list", "My List", R.drawable.ic_nav_my_list, TvScreen.MyList, screen is TvScreen.MyList),
     )
-    val navFocusRequesters = remember { destinations.associate { it.key to FocusRequester() } }
+    val destinations = allDestinations.filter { showLiveTv || it.key != "live-tv" }
+    val navFocusRequesters = remember { allDestinations.associate { it.key to FocusRequester() } }
     var lastFocusedNavKey by rememberSaveable {
         mutableStateOf(destinations.firstOrNull { it.active }?.key ?: "home")
     }
