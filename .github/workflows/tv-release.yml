@@ -128,8 +128,8 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Hides the Live TV navigation option when the signed-in account's package disables Live TV.
-            - Reads the effective `liveTvEnabled` entitlement on sign-in and session restore, and guards Live TV entry/playback.
+            - Moves the profile selector to the top of the sidebar and opens its menu alongside it.
+            - Places the supplied Streammore logo in the former profile-selector slot at the bottom, preserving the same 44dp square size.
 
             SHA-256: `${{ env.SHA256 }}`
 

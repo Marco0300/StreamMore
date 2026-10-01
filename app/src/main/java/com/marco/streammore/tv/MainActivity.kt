@@ -1101,12 +1101,17 @@ internal fun AppShell(
                     .testTag("side-navigation-rail"),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
+                ProfileMenuTrigger(
+                    profile = profile,
+                    expanded = profileMenuOpen,
+                    modifier = Modifier.padding(top = 12.dp),
+                ) { profileMenuOpen = true }
                 Column(
                     Modifier
                         .weight(1f)
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .padding(top = 108.dp, bottom = 8.dp),
+                        .padding(top = 20.dp, bottom = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
@@ -1130,11 +1135,15 @@ internal fun AppShell(
                         )
                     }
                 }
-                ProfileMenuTrigger(
-                    profile = profile,
-                    expanded = profileMenuOpen,
-                    modifier = Modifier.padding(bottom = 12.dp),
-                ) { profileMenuOpen = true }
+                Image(
+                    painter = painterResource(R.drawable.streammore_sidebar_logo),
+                    contentDescription = "Streammore logo",
+                    modifier = Modifier
+                        .padding(bottom = 12.dp)
+                        .size(44.dp)
+                        .testTag("side-nav-brand-logo"),
+                    contentScale = ContentScale.Fit,
+                )
             }
             Box(
                 Modifier
@@ -1171,8 +1180,8 @@ internal fun AppShell(
         if (profileMenuOpen) {
             Surface(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .padding(start = SideNavWidth + 8.dp, bottom = 12.dp)
+                    .align(Alignment.TopStart)
+                    .padding(start = SideNavWidth + 8.dp, top = 12.dp)
                     .widthIn(min = 230.dp, max = 280.dp)
                     .testTag("profile-menu-panel"),
                 color = Panel,
@@ -1225,6 +1234,7 @@ private fun SideNavButton(
     Box(
         Modifier
             .size(40.dp)
+            .testTag("side-nav-item-${destination.key}")
             .focusRequester(focusRequester)
             .onGloballyPositioned { coordinates ->
                 centerY = with(density) {
@@ -1298,6 +1308,7 @@ private fun ProfileMenuTrigger(
             )
             .onFocusChanged { focused = it.isFocused || it.hasFocus }
             .semantics { contentDescription = "Profile menu" }
+            .testTag("side-profile-menu-trigger")
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {

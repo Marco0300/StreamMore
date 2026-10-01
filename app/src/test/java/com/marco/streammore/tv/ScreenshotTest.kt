@@ -195,6 +195,41 @@ class ScreenshotTest {
     }
 
     @Test
+    fun profileSelectorMovesToTopAndLogoReplacesTheBottomSlot() {
+        compose.setContent {
+            AppFrame {
+                AppShell(TvScreen.Home, { }, Fake.profiles[0]) {
+                    Text("Catalog")
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        val rail = compose.onNodeWithTag("side-navigation-rail").fetchSemanticsNode().boundsInRoot
+        val profile = compose.onNodeWithTag("side-profile-menu-trigger").fetchSemanticsNode().boundsInRoot
+        val firstNavItem = compose.onNodeWithTag("side-nav-item-search").fetchSemanticsNode().boundsInRoot
+        val logo = compose.onNodeWithTag("side-nav-brand-logo").fetchSemanticsNode().boundsInRoot
+        val density = compose.activity.resources.displayMetrics.density
+
+        check(profile.top < firstNavItem.top) {
+            "the profile selector should sit above the first navigation item"
+        }
+        check(abs(profile.width - logo.width) <= 1f && abs(profile.height - logo.height) <= 1f) {
+            "the logo should occupy the same 44dp square as the former profile selector"
+        }
+        check(logo.top > rail.center.y && rail.bottom - logo.bottom <= 16f * density) {
+            "the logo should occupy the bottom slot of the side navigation"
+        }
+
+        compose.onNodeWithContentDescription("Profile menu").performClick()
+        compose.waitForIdle()
+        val profilePanel = compose.onNodeWithTag("profile-menu-panel").fetchSemanticsNode().boundsInRoot
+        check(profilePanel.top < rail.center.y) {
+            "the profile menu panel should open at the top beside its relocated trigger"
+        }
+    }
+
+    @Test
     fun accountWithoutLiveTvDoesNotSeeTheNavigationOption() {
         compose.setContent {
             AppFrame {
