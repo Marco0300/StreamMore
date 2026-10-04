@@ -932,6 +932,7 @@ internal fun StreammoreTvApp() {
                         current.initialPositionMs,
                         current.introEndSeconds,
                         current.recapEndSeconds,
+                        current.tmdbId,
                         current.audioSource,
                         { position, duration ->
                             updatePlaybackUi(current, position, duration)
@@ -3114,6 +3115,7 @@ internal fun PlayerScreen(
     initialPositionMs: Long? = null,
     introEndSeconds: Long? = null,
     recapEndSeconds: Long? = null,
+    tmdbId: Int? = null,
     audioSource: String? = null,
     onProgress: (position: Long, duration: Long) -> Unit = { _, _ -> },
     onPlayNext: (NextEpisodeInfo) -> Unit = {},
@@ -3167,12 +3169,21 @@ internal fun PlayerScreen(
     var playbackPosition by remember(source) { mutableStateOf(0L) }
     var playbackDuration by remember(source) { mutableStateOf(0L) }
     var isPlaying by remember(source) { mutableStateOf(true) }
-    var skipLabel by remember(source) { mutableStateOf<String?>(null) }
-    var skipTargetMs by remember(source) { mutableStateOf<Long?>(null) }
+    var introDbTimings by remember(tmdbId, season, episode) { mutableStateOf(IntroDbTimings()) }
+    var skipTarget by remember(source) { mutableStateOf<SkipTarget?>(null) }
+    var dismissedSkipTarget by remember(source) { mutableStateOf<SkipTarget?>(null) }
+    var skipButtonFocused by remember(source) { mutableStateOf(false) }
     val qualityFocus = remember(source) { FocusRequester() }
     val qualityOptionFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val nextCloseFocus = remember(source, nextEpisode) { FocusRequester() }
+    val skipActionFocus = remember(source) { FocusRequester() }
+    val skipPromptTarget = skipTarget.takeIf {
+        shouldShowSkipPrompt(it, dismissedSkipTarget, nextPromptVisible)
+    }
+    val chromeSkipTarget = skipTarget?.takeIf {
+        it != dismissedSkipTarget && it != skipPromptTarget && !nextPromptVisible
+    }
     val playerFocus = remember(source) { FocusRequester() }
     val playFocus = remember(source) { FocusRequester() }
     val seekFocus = remember(source) { FocusRequester() }
@@ -3407,23 +3418,29 @@ internal fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(player, chromeVisible) {
-        while (chromeVisible) {
-            playbackPosition = player.currentPosition.coerceAtLeast(0L)
-            playbackDuration = player.duration.coerceAtLeast(0L)
-            isPlaying = player.isPlaying
-            val seconds = playbackPosition / 1000L
-            val recap = recapEndSeconds ?: 0L
-            val intro = introEndSeconds ?: 0L
-            if (recap > 0 && seconds > 1 && seconds < recap - 2) {
-                skipLabel = "Skip recap"
-                skipTargetMs = recap * 1000L
-            } else if (intro > 0 && seconds > maxOf(recap, 1L) && seconds < intro - 2) {
-                skipLabel = "Skip intro"
-                skipTargetMs = intro * 1000L
-            } else {
-                skipLabel = null
-                skipTargetMs = null
+    LaunchedEffect(tmdbId, season, episode) {
+        // IntroDB exposes public, read-only timings; a miss or network failure is
+        // deliberately treated as no metadata so playback is never blocked.
+        introDbTimings = fetchIntroDbTimings(tmdbId, season, episode)
+    }
+
+    LaunchedEffect(player, chromeVisible, introDbTimings, introEndSeconds, recapEndSeconds) {
+        while (true) {
+            val position = player.currentPosition.coerceAtLeast(0L)
+            val target = chooseSkipTarget(
+                positionMs = position,
+                timings = introDbTimings,
+                customIntroEndSeconds = introEndSeconds,
+                customRecapEndSeconds = recapEndSeconds,
+            )
+            if (target != skipTarget) {
+                if (target == null) dismissedSkipTarget = null
+                skipTarget = target
+            }
+            if (chromeVisible) {
+                playbackPosition = position
+                playbackDuration = player.duration.coerceAtLeast(0L)
+                isPlaying = player.isPlaying
             }
             delay(250)
         }
@@ -3447,6 +3464,20 @@ internal fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(skipPromptTarget) {
+        skipButtonFocused = false
+        if (skipPromptTarget == null) return@LaunchedEffect
+        // The popup is composed above PlayerView; retry after frames until the
+        // button reports actual focus, rather than assuming requestFocus succeeded.
+        repeat(5) {
+            withFrameNanos { }
+            runCatching { skipActionFocus.requestFocus() }
+            withFrameNanos { }
+            if (skipButtonFocused) return@LaunchedEffect
+            delay(80)
+        }
+    }
+
     LaunchedEffect(nextPromptVisible, nextEpisode) {
         if (nextPromptVisible && nextEpisode != null && !nextPromptDismissed) {
             nextActionFocused = "play"
@@ -3457,6 +3488,13 @@ internal fun PlayerScreen(
                 if (focused) return@LaunchedEffect
             }
         }
+    }
+
+    fun skipActiveSegment(target: SkipTarget) {
+        dismissedSkipTarget = target
+        runCatching { player.seekTo(target.targetMs) }
+        chromeVisible = true
+        interactionTick++
     }
 
     DisposableEffect(player, nextEpisode) {
@@ -3490,6 +3528,11 @@ internal fun PlayerScreen(
                 nextPromptDismissed = true
                 nextPromptVisible = false
             }
+            skipPromptTarget != null -> {
+                dismissedSkipTarget = skipPromptTarget
+                chromeVisible = true
+                interactionTick++
+            }
             qualityMenuOpen -> qualityMenuOpen = false
             subtitleMenuOpen -> subtitleMenuOpen = false
             sourceMenuOpen -> sourceMenuOpen = false
@@ -3521,6 +3564,15 @@ internal fun PlayerScreen(
                         requestNextEpisode()
                     }
                     true
+                } else if (event.type == KeyEventType.KeyDown && skipPromptTarget != null) {
+                    when (event.key) {
+                        Key.DirectionCenter, Key.Enter -> {
+                            skipActiveSegment(skipPromptTarget)
+                            true
+                        }
+                        Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> true
+                        else -> false
+                    }
                 } else if (event.type == KeyEventType.KeyDown && !chromeVisible && event.key == Key.DirectionLeft) {
                     player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L))
                     chromeVisible = true
@@ -3610,10 +3662,10 @@ internal fun PlayerScreen(
             Column(
                 Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 28.dp, vertical = 22.dp),
             ) {
-                if (skipLabel != null && skipTargetMs != null) {
+                if (chromeSkipTarget != null) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TvButton(onClick = { player.seekTo(skipTargetMs!!); skipLabel = null }) {
-                            Text(skipLabel!!, color = TextPrimary, fontSize = 14.sp)
+                        TvButton(onClick = { skipActiveSegment(chromeSkipTarget) }) {
+                            Text(chromeSkipTarget.label, color = TextPrimary, fontSize = 14.sp)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
@@ -3866,7 +3918,52 @@ internal fun PlayerScreen(
                 }
             }
         }
+        if (skipPromptTarget != null) {
+            SkipSegmentPrompt(
+                target = skipPromptTarget,
+                focusRequester = skipActionFocus,
+                onSkip = { skipActiveSegment(skipPromptTarget) },
+                onFocusGained = { skipButtonFocused = true },
+                modifier = Modifier.align(Alignment.BottomEnd)
+                    .padding(end = 34.dp, bottom = 42.dp)
+                    .widthIn(max = 360.dp),
+            )
+        }
         playerError?.let { ErrorBanner(it, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+@Composable
+internal fun SkipSegmentPrompt(
+    target: SkipTarget,
+    focusRequester: FocusRequester,
+    onSkip: () -> Unit,
+    modifier: Modifier = Modifier,
+    onFocusGained: (() -> Unit)? = null,
+) {
+    Surface(
+        modifier = modifier,
+        color = Color(0xF21A1425),
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, BorderIdle),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                if (target.label == "Skip recap") "RECAP DETECTED" else "INTRO DETECTED",
+                color = Purple,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.2.sp,
+            )
+            TvButton(
+                onClick = onSkip,
+                primary = true,
+                modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                onFocusGained = onFocusGained,
+            ) {
+                Text(target.label, fontSize = 14.sp)
+            }
+        }
     }
 }
 
