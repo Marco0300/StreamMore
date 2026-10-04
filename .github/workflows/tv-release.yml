@@ -128,8 +128,9 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Moves the profile selector to the top of the sidebar and opens its menu alongside it.
-            - Places the supplied Streammore logo in the former profile-selector slot at the bottom, preserving the same 44dp square size.
+            - Adds focused, single-action “Skip intro” and “Skip recap” prompts for detected episode segments.
+            - Uses public IntroDB timings alongside existing per-title markers; timing lookups are best-effort.
+            - Gives the end-of-episode prompt priority so the skip action does not steal focus from Up Next.
 
             SHA-256: `${{ env.SHA256 }}`
 
