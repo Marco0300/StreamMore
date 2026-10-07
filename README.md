@@ -8,7 +8,9 @@ API and Flyx retrieval URLs.
 
 ## Development
 
-Set the service address in `app/build.gradle.kts` if needed:
+Debug builds use the private LAN service; release builds target the public Streammore site at `https://play.streammore.xyz`.
+
+Set the debug service address in `app/build.gradle.kts` if needed:
 
 ```text
 http://192.168.3.221:3896

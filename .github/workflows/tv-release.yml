@@ -128,9 +128,7 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Adds focused, single-action “Skip intro” and “Skip recap” prompts for detected episode segments.
-            - Uses public IntroDB timings alongside existing per-title markers; timing lookups are best-effort.
-            - Gives the end-of-episode prompt priority so the skip action does not steal focus from Up Next.
+            - Targets the production Streammore service at `https://play.streammore.xyz`.
 
             SHA-256: `${{ env.SHA256 }}`
 

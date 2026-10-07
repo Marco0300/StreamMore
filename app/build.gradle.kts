@@ -11,8 +11,8 @@ android {
         applicationId = "com.marco.streammore.tv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 58
-        versionName = "1.18.13"
+        versionCode = 59
+        versionName = "1.18.14"
     }
 
     val releaseKeystore = System.getenv("STREAMMORE_RELEASE_KEYSTORE")
@@ -38,7 +38,7 @@ android {
         }
         release {
             isMinifyEnabled = false
-            buildConfigField("String", "STREAMMORE_BASE_URL", "\"https://streammore.mmcloud.co.za\"")
+            buildConfigField("String", "STREAMMORE_BASE_URL", "\"https://play.streammore.xyz\"")
             if (!releaseKeystore.isNullOrBlank() && !releaseStorePassword.isNullOrBlank() && !releaseKeyPassword.isNullOrBlank()) {
                 signingConfig = signingConfigs.getByName("release")
             }
