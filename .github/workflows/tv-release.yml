@@ -128,7 +128,8 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Targets the production Streammore service at `https://play.streammore.xyz`.
+            - Adds an audio-track selector when a title has multiple supported audio tracks, including commentary tracks.
+            - Labels choices with track language and channel layout, while Auto keeps English preferred.
 
             SHA-256: `${{ env.SHA256 }}`
 

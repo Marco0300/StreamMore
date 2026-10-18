@@ -207,6 +207,83 @@ internal fun availableVideoQualities(tracks: Tracks): List<AvailableVideoQuality
         .distinctBy { "${it.group.id}:${it.label}" }
         .sortedWith(compareByDescending<AvailableVideoQuality> { it.label.removeSuffix("p").toIntOrNull() ?: 0 }.thenBy { it.label })
 }
+internal data class AvailableAudioTrack(
+    val key: String,
+    val label: String,
+    val group: TrackGroup,
+    val trackIndex: Int,
+    val isSelected: Boolean,
+)
+
+/** Builds a useful audio label even when a container omits a human-readable label. */
+internal fun audioTrackLabel(
+    trackLabel: String?,
+    language: String?,
+    roleFlags: Int,
+    channelCount: Int,
+    trackIndex: Int,
+): String {
+    val label = trackLabel?.trim()?.takeIf { it.isNotEmpty() }
+    val languageLabel = language
+        ?.takeIf { it.isNotBlank() && !it.equals("und", ignoreCase = true) }
+        ?.let { java.util.Locale.forLanguageTag(it).getDisplayLanguage(java.util.Locale.getDefault()) }
+        ?.takeIf { it.isNotBlank() }
+    val parts = mutableListOf<String>()
+    if (label != null) {
+        if (languageLabel != null && !label.contains(languageLabel, ignoreCase = true)) {
+            parts += languageLabel
+        }
+        parts += label
+    } else {
+        parts += languageLabel ?: "Audio ${trackIndex + 1}"
+    }
+
+    val hasCommentaryLabel = parts.any { it.contains("commentary", ignoreCase = true) }
+    if (roleFlags and C.ROLE_FLAG_COMMENTARY != 0 && !hasCommentaryLabel) {
+        parts += "Commentary"
+    }
+    val channelLabel = when (channelCount) {
+        1 -> "Mono"
+        2 -> "Stereo"
+        6 -> "5.1"
+        8 -> "7.1"
+        else -> channelCount.takeIf { it > 0 }?.let { "$it ch" }
+    }
+    if (channelLabel != null) parts += channelLabel
+    return parts.joinToString(" · ")
+}
+
+/** Expose only supported audio streams discovered by Media3 for this playback. */
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal fun availableAudioTracks(tracks: Tracks): List<AvailableAudioTrack> {
+    val options = tracks.groups.withIndex()
+        .filter { (_, group) -> group.type == C.TRACK_TYPE_AUDIO && group.isSupported(false) }
+        .flatMap { (groupIndex, group) ->
+            (0 until group.length)
+                .filter { index -> group.isTrackSupported(index, false) }
+                .map { index ->
+                    val format = group.getTrackFormat(index)
+                    AvailableAudioTrack(
+                        key = "$groupIndex:$index",
+                        label = audioTrackLabel(format.label, format.language, format.roleFlags, format.channelCount, index),
+                        group = group.mediaTrackGroup,
+                        trackIndex = index,
+                        isSelected = group.isTrackSelected(index),
+                    )
+                }
+        }
+    val labelCounts = options.groupingBy { it.label.lowercase(java.util.Locale.ROOT) }.eachCount()
+    return options.mapIndexed { index, option ->
+        if ((labelCounts[option.label.lowercase(java.util.Locale.ROOT)] ?: 0) > 1) {
+            option.copy(label = "${option.label} · Track ${index + 1}")
+        } else {
+            option
+        }
+    }
+}
+
+internal data class AudioTrackMenuOption(val key: String, val label: String)
+
 internal val StreammoreScheme = darkColorScheme(
     primary = Purple,
     onPrimary = Color.White,
@@ -3145,6 +3222,7 @@ internal fun PlayerScreen(
     var interactionTick by remember(source) { mutableStateOf(0) }
     var qualityMenuOpen by remember(source) { mutableStateOf(false) }
     var subtitleMenuOpen by remember(source) { mutableStateOf(false) }
+    var audioTrackMenuOpen by remember(source) { mutableStateOf(false) }
     var sourceMenuOpen by remember(source) { mutableStateOf(false) }
     var episodeMenuOpen by remember(source) { mutableStateOf(false) }
     var settingsMenuOpen by remember(source) { mutableStateOf(false) }
@@ -3152,6 +3230,8 @@ internal fun PlayerScreen(
     var selectedSubtitle by remember(source) { mutableStateOf<String?>(null) }
     var selectedQualityLabel by remember(source) { mutableStateOf("Auto") }
     var availableQualities by remember(source) { mutableStateOf<List<AvailableVideoQuality>>(emptyList()) }
+    var audioTracks by remember(source) { mutableStateOf<List<AvailableAudioTrack>>(emptyList()) }
+    var selectedAudioTrackKey by remember(source) { mutableStateOf<String?>(null) }
     var nextPromptVisible by remember(source, nextEpisode) { mutableStateOf(false) }
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
     var countdownSeconds by remember(source, nextEpisode) { mutableStateOf(30) }
@@ -3175,6 +3255,8 @@ internal fun PlayerScreen(
     var skipButtonFocused by remember(source) { mutableStateOf(false) }
     val qualityFocus = remember(source) { FocusRequester() }
     val qualityOptionFocus = remember(source) { FocusRequester() }
+    val audioTrackFocus = remember(source) { FocusRequester() }
+    val audioTrackOptionFocus = remember(source) { FocusRequester() }
     val nextFocus = remember(source, nextEpisode) { FocusRequester() }
     val nextCloseFocus = remember(source, nextEpisode) { FocusRequester() }
     val skipActionFocus = remember(source) { FocusRequester() }
@@ -3225,6 +3307,10 @@ internal fun PlayerScreen(
                 addListener(object : Player.Listener {
                     override fun onTracksChanged(tracks: Tracks) {
                         availableQualities = availableVideoQualities(tracks)
+                        audioTracks = availableAudioTracks(tracks)
+                        if (selectedAudioTrackKey != null && audioTracks.none { it.key == selectedAudioTrackKey }) {
+                            selectedAudioTrackKey = null
+                        }
                     }
                     override fun onPlayerError(error: PlaybackException) {
                         val duration = self.duration.takeIf { it > 0L } ?: playbackDuration
@@ -3350,6 +3436,19 @@ internal fun PlayerScreen(
         qualityMenuOpen = false
     }
 
+    fun applyAudioTrack(track: AvailableAudioTrack?) {
+        val parameters = trackSelector.buildUponParameters()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+        if (track != null) {
+            parameters.addOverride(TrackSelectionOverride(track.group, listOf(track.trackIndex)))
+            selectedAudioTrackKey = track.key
+        } else {
+            selectedAudioTrackKey = null
+        }
+        trackSelector.parameters = parameters.build()
+        audioTrackMenuOpen = false
+    }
+
     fun applySubtitle(language: String?) {
         val parameters = trackSelector.buildUponParameters()
             .setRendererDisabled(C.TRACK_TYPE_TEXT, language == null)
@@ -3418,6 +3517,13 @@ internal fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(audioTrackMenuOpen) {
+        delay(80)
+        runCatching {
+            if (audioTrackMenuOpen) audioTrackOptionFocus.requestFocus() else audioTrackFocus.requestFocus()
+        }
+    }
+
     LaunchedEffect(tmdbId, season, episode) {
         // IntroDB exposes public, read-only timings; a miss or network failure is
         // deliberately treated as no metadata so playback is never blocked.
@@ -3446,8 +3552,8 @@ internal fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen, subtitleMenuOpen, sourceMenuOpen, episodeMenuOpen, settingsMenuOpen) {
-        if (chromeVisible && !qualityMenuOpen && !subtitleMenuOpen && !sourceMenuOpen && !episodeMenuOpen && !settingsMenuOpen) {
+    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen, subtitleMenuOpen, audioTrackMenuOpen, sourceMenuOpen, episodeMenuOpen, settingsMenuOpen) {
+        if (chromeVisible && !qualityMenuOpen && !subtitleMenuOpen && !audioTrackMenuOpen && !sourceMenuOpen && !episodeMenuOpen && !settingsMenuOpen) {
             delay(5_000)
             chromeVisible = false
         }
@@ -3535,6 +3641,7 @@ internal fun PlayerScreen(
             }
             qualityMenuOpen -> qualityMenuOpen = false
             subtitleMenuOpen -> subtitleMenuOpen = false
+            audioTrackMenuOpen -> audioTrackMenuOpen = false
             sourceMenuOpen -> sourceMenuOpen = false
             episodeMenuOpen -> episodeMenuOpen = false
             settingsMenuOpen -> settingsMenuOpen = false
@@ -3744,14 +3851,39 @@ internal fun PlayerScreen(
                     if (subtitles.isNotEmpty()) {
                         TextButton(onClick = {
                             subtitleMenuOpen = !subtitleMenuOpen
+                            audioTrackMenuOpen = false
+                            settingsMenuOpen = false
                             qualityMenuOpen = false
                             sourceMenuOpen = false
                             episodeMenuOpen = false
                         }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
                     }
+                    if (audioTracks.size > 1) {
+                        TextButton(
+                            onClick = {
+                                audioTrackMenuOpen = !audioTrackMenuOpen
+                                qualityMenuOpen = false
+                                subtitleMenuOpen = false
+                                sourceMenuOpen = false
+                                episodeMenuOpen = false
+                                settingsMenuOpen = false
+                            },
+                            modifier = keepControlsVisible(Modifier.focusRequester(audioTrackFocus).widthIn(max = 180.dp)),
+                        ) {
+                            Text(
+                                "♪ ${audioTracks.firstOrNull { it.isSelected }?.label ?: "Audio"}",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     if (sources.size > 1) {
                         TextButton(onClick = {
                             sourceMenuOpen = !sourceMenuOpen
+                            audioTrackMenuOpen = false
+                            settingsMenuOpen = false
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             episodeMenuOpen = false
@@ -3760,6 +3892,8 @@ internal fun PlayerScreen(
                     if (episodeList.isNotEmpty()) {
                         TextButton(onClick = {
                             episodeMenuOpen = !episodeMenuOpen
+                            audioTrackMenuOpen = false
+                            settingsMenuOpen = false
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             sourceMenuOpen = false
@@ -3769,10 +3903,27 @@ internal fun PlayerScreen(
                         TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = 13.sp) }
                     }
                     TvButton(
-                        onClick = { qualityMenuOpen = !qualityMenuOpen },
+                        onClick = {
+                            qualityMenuOpen = !qualityMenuOpen
+                            audioTrackMenuOpen = false
+                            subtitleMenuOpen = false
+                            sourceMenuOpen = false
+                            episodeMenuOpen = false
+                            settingsMenuOpen = false
+                        },
                         modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus)),
                     ) { Text("▦ $selectedQualityLabel", color = TextPrimary, fontSize = 13.sp) }
-                    TvButton(onClick = { settingsMenuOpen = !settingsMenuOpen }, modifier = keepControlsVisible()) {
+                    TvButton(
+                        onClick = {
+                            settingsMenuOpen = !settingsMenuOpen
+                            audioTrackMenuOpen = false
+                            qualityMenuOpen = false
+                            subtitleMenuOpen = false
+                            sourceMenuOpen = false
+                            episodeMenuOpen = false
+                        },
+                        modifier = keepControlsVisible(),
+                    ) {
                         Text("⚙", color = TextPrimary, fontSize = 14.sp)
                     }
                 }
@@ -3821,9 +3972,19 @@ internal fun PlayerScreen(
                         TvButton(onClick = { autoNextEnabled = !autoNextEnabled }, selected = autoNextEnabled, modifier = Modifier.fillMaxWidth()) {
                             Text("Auto-play next episode: ${if (autoNextEnabled) "On" else "Off"}", color = TextPrimary, fontSize = 14.sp)
                         }
-                        Text("Quality and subtitles are available in the player bar.", color = Muted, fontSize = 12.sp)
+                        Text("Audio, quality and subtitles are available in the player bar.", color = Muted, fontSize = 12.sp)
                     }
                 }
+            }
+            if (audioTrackMenuOpen) {
+                AudioTrackSelectionMenu(
+                    options = audioTracks.map { AudioTrackMenuOption(it.key, it.label) },
+                    selectedKey = selectedAudioTrackKey,
+                    onSelect = { key -> applyAudioTrack(key?.let { selected -> audioTracks.firstOrNull { it.key == selected } }) },
+                    buttonFocusRequester = audioTrackFocus,
+                    optionFocusRequester = audioTrackOptionFocus,
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp),
+                )
             }
             if (subtitleMenuOpen) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 230.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
@@ -3930,6 +4091,51 @@ internal fun PlayerScreen(
             )
         }
         playerError?.let { ErrorBanner(it, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+@Composable
+internal fun AudioTrackSelectionMenu(
+    options: List<AudioTrackMenuOption>,
+    selectedKey: String?,
+    onSelect: (String?) -> Unit,
+    buttonFocusRequester: FocusRequester,
+    optionFocusRequester: FocusRequester,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.widthIn(min = 260.dp, max = 420.dp),
+        color = Panel.copy(alpha = 0.98f),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, BorderIdle),
+    ) {
+        Column(
+            Modifier.padding(10.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+        ) {
+            Text("AUDIO TRACKS", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            TvButton(
+                onClick = { onSelect(null) },
+                selected = selectedKey == null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .focusRequester(optionFocusRequester)
+                    .focusProperties { up = buttonFocusRequester },
+            ) {
+                Text("Auto · English preferred", color = TextPrimary, fontSize = 14.sp)
+            }
+            options.forEachIndexed { index, option ->
+                TvButton(
+                    onClick = { onSelect(option.key) },
+                    selected = option.key == selectedKey,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .focusProperties { if (index == options.lastIndex) down = buttonFocusRequester },
+                ) {
+                    Text(option.label, color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+        }
     }
 }
 

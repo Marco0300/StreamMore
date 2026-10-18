@@ -48,6 +48,59 @@ class PlayerFeatureTest {
     }
 
     @Test
+    fun audioTrackRoleFlagsAreShownInReadableTrackLabels() {
+        assertEquals(
+            "English · Commentary · Stereo",
+            audioTrackLabel("English", "en", androidx.media3.common.C.ROLE_FLAG_COMMENTARY, 2, 0),
+        )
+    }
+
+    @Test
+    fun audioTrackLabelsDoNotRepeatCommentaryAlreadyInTheName() {
+        assertEquals(
+            "English Commentary · 5.1",
+            audioTrackLabel("English Commentary", "en", 0, 6, 1),
+        )
+    }
+
+    @Test
+    fun sameLanguageAudioTracksRemainIndividuallySelectable() {
+        val main = androidx.media3.common.Format.Builder()
+            .setLanguage("en")
+            .setLabel("English")
+            .setChannelCount(2)
+            .setSampleMimeType("audio/mp4a-latm")
+            .build()
+        val commentary = androidx.media3.common.Format.Builder()
+            .setId("commentary")
+            .setLanguage("en")
+            .setLabel("English")
+            .setChannelCount(2)
+            .setSampleMimeType("audio/mp4a-latm")
+            .build()
+        val group = androidx.media3.common.TrackGroup("audio", main, commentary)
+        val mediaTracks = androidx.media3.common.Tracks(
+            listOf(
+                androidx.media3.common.Tracks.Group(
+                    group,
+                    false,
+                    intArrayOf(androidx.media3.common.C.FORMAT_HANDLED, androidx.media3.common.C.FORMAT_HANDLED),
+                    booleanArrayOf(true, false),
+                ),
+            ),
+        )
+
+        val options = availableAudioTracks(mediaTracks)
+
+        assertEquals(2, options.size)
+        assertEquals(
+            listOf("English · Stereo · Track 1", "English · Stereo · Track 2"),
+            options.map { it.label },
+        )
+        assertEquals(true, options.first().isSelected)
+    }
+
+    @Test
     fun releaseDatesAreShownAsReadableLabels() {
         assertEquals("Jan 5, 2024", formatReleaseDate("2024-01-05"))
         assertEquals("2024", formatReleaseDate("2024"))

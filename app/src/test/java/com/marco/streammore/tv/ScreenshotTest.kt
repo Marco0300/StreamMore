@@ -21,7 +21,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalFocusManager
@@ -745,6 +747,37 @@ class ScreenshotTest {
         val captions = compose.onAllNodesWithText("Ends at", substring = true, useUnmergedTree = true)
             .fetchSemanticsNodes()
         check(captions.isEmpty()) { "the control row should start hidden, and the caption with it" }
+    }
+
+    @Test
+    fun audioTrackMenuListsCommentaryChoicesAndHandlesSelection() {
+        val selections = mutableListOf<String?>()
+        val buttonFocus = FocusRequester()
+        val optionFocus = FocusRequester()
+        compose.setContent {
+            AppFrame {
+                Box(Modifier.fillMaxSize()) {
+                    AudioTrackSelectionMenu(
+                        options = listOf(
+                            AudioTrackMenuOption("english", "English · Stereo"),
+                            AudioTrackMenuOption("commentary", "English · Commentary · Stereo"),
+                        ),
+                        selectedKey = null,
+                        onSelect = { selections += it },
+                        buttonFocusRequester = buttonFocus,
+                        optionFocusRequester = optionFocus,
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp),
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+        writePng("32-audio-track-menu", capture())
+
+        compose.onNodeWithText("English · Commentary · Stereo").performClick()
+        check(selections == listOf("commentary")) { "selecting the commentary track should return its track key" }
+        compose.onNodeWithText("Auto · English preferred").performClick()
+        check(selections == listOf("commentary", null)) { "Auto should clear an explicit audio-track choice" }
     }
 
     private fun assertTextPresent(text: String, substring: Boolean = false) {
