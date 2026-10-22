@@ -3231,6 +3231,7 @@ internal fun PlayerScreen(
     var selectedQualityLabel by remember(source) { mutableStateOf("Auto") }
     var availableQualities by remember(source) { mutableStateOf<List<AvailableVideoQuality>>(emptyList()) }
     var audioTracks by remember(source) { mutableStateOf<List<AvailableAudioTrack>>(emptyList()) }
+    var audioTracksDiscovered by remember(source) { mutableStateOf(false) }
     var selectedAudioTrackKey by remember(source) { mutableStateOf<String?>(null) }
     var nextPromptVisible by remember(source, nextEpisode) { mutableStateOf(false) }
     var nextPromptDismissed by remember(source, nextEpisode) { mutableStateOf(false) }
@@ -3308,6 +3309,7 @@ internal fun PlayerScreen(
                     override fun onTracksChanged(tracks: Tracks) {
                         availableQualities = availableVideoQualities(tracks)
                         audioTracks = availableAudioTracks(tracks)
+                        audioTracksDiscovered = true
                         if (selectedAudioTrackKey != null && audioTracks.none { it.key == selectedAudioTrackKey }) {
                             selectedAudioTrackKey = null
                         }
@@ -3858,27 +3860,17 @@ internal fun PlayerScreen(
                             episodeMenuOpen = false
                         }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
                     }
-                    if (audioTracks.size > 1) {
-                        TextButton(
-                            onClick = {
-                                audioTrackMenuOpen = !audioTrackMenuOpen
-                                qualityMenuOpen = false
-                                subtitleMenuOpen = false
-                                sourceMenuOpen = false
-                                episodeMenuOpen = false
-                                settingsMenuOpen = false
-                            },
-                            modifier = keepControlsVisible(Modifier.focusRequester(audioTrackFocus).widthIn(max = 180.dp)),
-                        ) {
-                            Text(
-                                "♪ ${audioTracks.firstOrNull { it.isSelected }?.label ?: "Audio"}",
-                                color = Color.White,
-                                fontSize = 13.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
+                    AudioTrackSelectorButton(
+                        onClick = {
+                            audioTrackMenuOpen = !audioTrackMenuOpen
+                            qualityMenuOpen = false
+                            subtitleMenuOpen = false
+                            sourceMenuOpen = false
+                            episodeMenuOpen = false
+                            settingsMenuOpen = false
+                        },
+                        modifier = keepControlsVisible(Modifier.focusRequester(audioTrackFocus).widthIn(max = 100.dp)),
+                    )
                     if (sources.size > 1) {
                         TextButton(onClick = {
                             sourceMenuOpen = !sourceMenuOpen
@@ -3980,6 +3972,7 @@ internal fun PlayerScreen(
                 AudioTrackSelectionMenu(
                     options = audioTracks.map { AudioTrackMenuOption(it.key, it.label) },
                     selectedKey = selectedAudioTrackKey,
+                    tracksDiscovered = audioTracksDiscovered,
                     onSelect = { key -> applyAudioTrack(key?.let { selected -> audioTracks.firstOrNull { it.key == selected } }) },
                     buttonFocusRequester = audioTrackFocus,
                     optionFocusRequester = audioTrackOptionFocus,
@@ -4095,9 +4088,20 @@ internal fun PlayerScreen(
 }
 
 @Composable
+internal fun AudioTrackSelectorButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    TextButton(onClick = onClick, modifier = modifier) {
+        Text("♪ Audio", color = Color.White, fontSize = 13.sp)
+    }
+}
+
+@Composable
 internal fun AudioTrackSelectionMenu(
     options: List<AudioTrackMenuOption>,
     selectedKey: String?,
+    tracksDiscovered: Boolean = true,
     onSelect: (String?) -> Unit,
     buttonFocusRequester: FocusRequester,
     optionFocusRequester: FocusRequester,
@@ -4123,6 +4127,11 @@ internal fun AudioTrackSelectionMenu(
                     .focusProperties { up = buttonFocusRequester },
             ) {
                 Text("Auto · English preferred", color = TextPrimary, fontSize = 14.sp)
+            }
+            if (!tracksDiscovered) {
+                Text("Detecting available audio tracks…", color = Muted, fontSize = 12.sp)
+            } else if (options.size <= 1) {
+                Text("No alternate audio tracks detected for this stream.", color = Muted, fontSize = 12.sp)
             }
             options.forEachIndexed { index, option ->
                 TvButton(

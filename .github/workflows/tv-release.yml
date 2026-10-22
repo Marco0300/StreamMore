@@ -128,7 +128,7 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Adds an audio-track selector when a title has multiple supported audio tracks, including commentary tracks.
+            - Keeps the Audio selector visible even while Media3 is discovering tracks; the menu reports when no alternate audio tracks are available.
             - Labels choices with track language and channel layout, while Auto keeps English preferred.
 
             SHA-256: `${{ env.SHA256 }}`

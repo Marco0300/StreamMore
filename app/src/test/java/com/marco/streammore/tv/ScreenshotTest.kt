@@ -750,6 +750,46 @@ class ScreenshotTest {
     }
 
     @Test
+    fun audioSelectorButtonIsVisibleBeforeTracksAreDiscovered() {
+        var clickCount = 0
+        compose.setContent {
+            AppFrame {
+                AudioTrackSelectorButton(onClick = { clickCount++ })
+            }
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("♪ Audio").performClick()
+        check(clickCount == 1) { "the audio selector control should be visible and clickable before track metadata arrives" }
+    }
+
+    @Test
+    fun audioTrackMenuExplainsWhenNoAlternateTrackIsAvailable() {
+        val buttonFocus = FocusRequester()
+        val optionFocus = FocusRequester()
+        compose.setContent {
+            AppFrame {
+                Box(Modifier.fillMaxSize()) {
+                    AudioTrackSelectionMenu(
+                        options = emptyList(),
+                        selectedKey = null,
+                        onSelect = { },
+                        buttonFocusRequester = buttonFocus,
+                        optionFocusRequester = optionFocus,
+                        modifier = Modifier.align(Alignment.BottomEnd),
+                    )
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        check(compose.onAllNodesWithText("No alternate audio tracks detected for this stream.", substring = true)
+            .fetchSemanticsNodes().isNotEmpty()) {
+            "opening Audio with no discovered alternatives should explain the empty list"
+        }
+    }
+
+    @Test
     fun audioTrackMenuListsCommentaryChoicesAndHandlesSelection() {
         val selections = mutableListOf<String?>()
         val buttonFocus = FocusRequester()
