@@ -840,10 +840,18 @@ internal fun StreammoreTvApp() {
             Box(Modifier.fillMaxSize()) {
                 routeStateHolder.SaveableStateProvider(routeStateKey(screen)) {
                     when (val current = screen) {
-                    TvScreen.Login -> LoginScreen(loading, error) { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { response ->
-                        liveTvEnabled = accountHasLiveTvAccess(response)
-                        loadProfiles()
-                    }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } }
+                    TvScreen.Login -> LoginFlow(loading, error,
+                        start = api::startDeviceLogin, poll = api::pollDeviceLogin, cancel = api::cancelDeviceLogin,
+                        onApproved = { response ->
+                            liveTvEnabled = accountHasLiveTvAccess(response)
+                            screen = TvScreen.Profiles
+                            loadProfiles()
+                        },
+                        onLogin = { email, password -> scope.launch { error = null; loading = true; runCatching { api.login(email, password) }.onSuccess { response ->
+                            liveTvEnabled = accountHasLiveTvAccess(response)
+                            loadProfiles()
+                        }.onFailure { error = it.message ?: "Sign-in failed" }; loading = false } },
+                    )
                     TvScreen.Profiles -> ProfileScreen(profiles, error) { profile ->
                         if (profile.kids && profile.hasPin) {
                             pendingProfile = profile
@@ -1762,15 +1770,15 @@ internal fun TvButton(
 // ── Screens ──────────────────────────────────────────────────────────────────
 
 @Composable
-internal fun LoginScreen(loading: Boolean, error: String?, onLogin: (String, String) -> Unit) {
+internal fun LoginScreen(loading: Boolean, error: String?, onCodeLogin: (() -> Unit)? = null, onLogin: (String, String) -> Unit) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val fieldWidth = 420.dp
-    Column(Modifier.fillMaxSize().padding(64.dp), Arrangement.Center, Alignment.CenterHorizontally) {
+    Column(Modifier.fillMaxSize().padding(horizontal = 64.dp, vertical = 32.dp), Arrangement.Center, Alignment.CenterHorizontally) {
         Image(
             painter = painterResource(R.drawable.streammore_logo),
             contentDescription = "Streammore",
-            modifier = Modifier.width(360.dp).height(120.dp),
+            modifier = Modifier.width(270.dp).height(90.dp),
             contentScale = ContentScale.Fit,
         )
         Spacer(Modifier.height(28.dp))
@@ -1795,6 +1803,12 @@ internal fun LoginScreen(loading: Boolean, error: String?, onLogin: (String, Str
             modifier = Modifier.width(fieldWidth),
         ) {
             Text("Sign in", fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
+        }
+        onCodeLogin?.let { openCode ->
+            Spacer(Modifier.height(12.dp))
+            TvButton(onClick = { if (!loading) openCode() }, modifier = Modifier.width(fieldWidth)) {
+                Text("Sign in with a code", fontSize = 16.sp)
+            }
         }
         error?.let {
             Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 18.dp).width(fieldWidth))

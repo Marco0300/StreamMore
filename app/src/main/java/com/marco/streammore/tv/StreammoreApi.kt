@@ -2,6 +2,8 @@ package com.marco.streammore.tv
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -31,6 +33,25 @@ class StreammoreApi(
             put("email", email)
             put("password", password)
         })
+
+    suspend fun startDeviceLogin(): DeviceLoginCode {
+        val body = post("/api/auth/device/start", JSONObject())
+        return DeviceLoginCode(body.getString("userCode"), body.getString("deviceCode"),
+            body.optInt("expiresIn", 600), body.optInt("interval", 5))
+    }
+
+    suspend fun pollDeviceLogin(deviceCode: String): JSONObject? {
+        val body = post("/api/auth/device/token", JSONObject().put("deviceCode", deviceCode))
+        return when (body.optString("status")) {
+            "pending" -> null
+            "approved" -> body
+            else -> throw ApiException(-1, "Unexpected device sign-in response")
+        }
+    }
+
+    suspend fun cancelDeviceLogin(deviceCode: String) {
+        post("/api/auth/device/cancel", JSONObject().put("deviceCode", deviceCode))
+    }
 
     suspend fun profiles(): List<Profile> = withContext(Dispatchers.IO) {
         val body = get("/api/profiles")
@@ -418,6 +439,17 @@ class StreammoreApi(
             body?.toString()?.toByteArray(Charsets.UTF_8)?.let { connection.outputStream.use { out -> out.write(it) } }
             val status = connection.responseCode
             Log.d(TAG, "$method $path -> HTTP $status")
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val text = stream?.use { input -> BufferedReader(InputStreamReader(input)).readText() } ?: "{}"
+            if (status !in 200..299) {
+                val message = runCatching { JSONObject(text).optString("error", text) }.getOrDefault(text)
+                throw ApiException(status, message)
+            }
+            val result = runCatching { JSONObject(text) }.getOrElse {
+                throw ApiException(status, "Backend returned invalid JSON from $path")
+            }
+            // A late response after Back must not resurrect a cancelled sign-in.
+            currentCoroutineContext().ensureActive()
             connection.headerFields.entries
                 .firstOrNull { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
                 ?.value
@@ -426,15 +458,7 @@ class StreammoreApi(
                     cookie = setCookie.substringBefore(';')
                     sessionPrefs.edit().putString("cookie", cookie).apply()
                 }
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.use { input -> BufferedReader(InputStreamReader(input)).readText() } ?: "{}"
-            if (status !in 200..299) {
-                val message = runCatching { JSONObject(text).optString("error", text) }.getOrDefault(text)
-                throw ApiException(status, message)
-            }
-            runCatching { JSONObject(text) }.getOrElse {
-                throw ApiException(status, "Backend returned invalid JSON from $path")
-            }
+            result
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (api: ApiException) {

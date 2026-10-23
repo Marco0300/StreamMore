@@ -128,8 +128,8 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Keeps the Audio selector visible even while Media3 is discovering tracks; the menu reports when no alternate audio tracks are available.
-            - Labels choices with track language and channel layout, while Auto keeps English preferred.
+            - Adds optional TV code sign-in: enter the code shown on TV at Account → Link a TV.
+            - Keeps email/password sign-in available and retries when a pairing code expires.
 
             SHA-256: `${{ env.SHA256 }}`
 

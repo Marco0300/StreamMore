@@ -75,6 +75,84 @@ import kotlin.math.abs
 @Config(sdk = [34], qualifiers = "w960dp-h540dp-xhdpi-notouch")
 class ScreenshotTest {
 
+    @Test fun loginOffersOptionalCodeSignInWithoutHidingPassword() {
+        var opened = 0
+        shot("login-code-option") {
+            LoginScreen(false, null, onCodeLogin = { opened++ }) { _, _ -> }
+        }
+        compose.onNodeWithText("Email").assertExists()
+        compose.onNodeWithText("Password").assertExists()
+        val option = compose.onNodeWithText("Sign in with a code")
+        val bounds = option.fetchSemanticsNode().boundsInRoot
+        org.junit.Assert.assertTrue(bounds.bottom <= compose.activity.resources.displayMetrics.heightPixels)
+        org.junit.Assert.assertTrue(bounds.top > 0)
+        option.performClick()
+        org.junit.Assert.assertEquals(1, opened)
+    }
+
+    @Test fun codeFlowShowsExactPublicCodeAndCancelReturnsToPassword() {
+        var starts = 0
+        var cancels = 0
+        shot("device-code-pending") {
+            LoginFlow(false, null,
+                start = { starts++; DeviceLoginCode("ABCD-EFGH", "fixture-private", 600, 5) },
+                poll = { null }, cancel = { cancels++ }, onApproved = { error("Not approved") },
+                onLogin = { _, _ -> },
+            )
+        }
+        compose.onNodeWithText("Sign in with a code").performClick()
+        compose.onNodeWithText("ABCD-EFGH").assertExists()
+        compose.onNodeWithText("https://streammore.mmcloud.co.za/account").assertExists()
+        compose.onNodeWithText("Choose Link a TV, then enter this code.").assertExists()
+        compose.mainClock.advanceTimeBy(200)
+        compose.waitForIdle()
+        compose.onNodeWithText("Cancel").assertIsFocused()
+        writePng("device-code-pending", capture())
+        compose.onNodeWithText("Cancel").performClick()
+        compose.onNodeWithText("Password").assertExists()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals(1, starts)
+            org.junit.Assert.assertEquals(1, cancels)
+        }
+    }
+
+    @Test fun expiredCodeCanBeReplacedByOneNewCode() {
+        var starts = 0
+        var cancels = 0
+        shot("device-code-expired") {
+            DeviceCodeLoginScreen(
+                start = { starts++; DeviceLoginCode(if (starts == 1) "OLD1-CODE" else "NEW2-CODE", "private-$starts", if (starts == 1) 0 else 600, 5) },
+                poll = { null }, cancel = { cancels++ }, onApproved = {}, onBack = {},
+            )
+        }
+        compose.onNodeWithText("Code expired. Get a new code.").assertExists()
+        compose.onNodeWithText("OLD1-CODE").assertDoesNotExist()
+        compose.mainClock.advanceTimeBy(200)
+        compose.onNodeWithText("Get a new code").assertIsFocused()
+        writePng("device-code-expired", capture())
+        compose.onNodeWithText("Get a new code").performClick()
+        compose.onNodeWithText("NEW2-CODE").assertExists()
+        compose.runOnIdle {
+            org.junit.Assert.assertEquals(2, starts)
+            org.junit.Assert.assertEquals(1, cancels)
+        }
+    }
+
+    @Test fun codeStartFailureIsSafeAndCanRetry() {
+        var starts = 0
+        shot("device-code-error") {
+            DeviceCodeLoginScreen(
+                start = { if (++starts == 1) throw ApiException(503, "fixture-private"); DeviceLoginCode("ABCD-EFGH", "fixture-private", 600, 5) },
+                poll = { null }, cancel = {}, onApproved = {}, onBack = {},
+            )
+        }
+        compose.onNodeWithText("Could not create a code. Check your connection and try again.").assertExists()
+        compose.onNodeWithText("fixture-private", substring = true).assertDoesNotExist()
+        compose.onNodeWithText("Get a new code").performClick()
+        compose.onNodeWithText("ABCD-EFGH").assertExists()
+        compose.runOnIdle { org.junit.Assert.assertEquals(2, starts) }
+    }
+
     /** A 24 hour wall clock, as the corner of the screen renders it. */
     private val clockPattern = Regex("^([01]\\d|2[0-3]):[0-5]\\d$")
 
