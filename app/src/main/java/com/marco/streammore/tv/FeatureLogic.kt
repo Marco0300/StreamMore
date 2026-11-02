@@ -154,3 +154,12 @@ internal fun collectionMeta(card: MediaCard): String {
     card.rating?.let { values += "★ %.1f".format(it) }
     return values.joinToString(" · ")
 }
+
+// ── Play Something ───────────────────────────────────────────────────────────
+
+/**
+ * Where a "Play Something" pick should start. The backend sends the stored
+ * position in seconds; a missing or zero position means play from the top.
+ */
+internal fun playPickPositionMs(card: MediaCard): Long? =
+    card.positionSeconds?.takeIf { it > 0.0 }?.let { (it * 1000).toLong() }

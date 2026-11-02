@@ -194,4 +194,32 @@ class NewEndpointsApiTest {
     ) { api, _ ->
         assertEquals(null, api.detail("movie", 1, "p1").collection)
     }
+
+    private val randomPick = """
+        {"item":{"mediaType":"tv","tmdbId":1396,"title":"Breaking Bad","year":"2008","rating":9.5,
+                 "poster":"https://image.tmdb.org/t/p/w500/bb.jpg","season":5,"episode":16,
+                 "position":1234.5,"duration":3300}}
+    """.trimIndent()
+
+    @Test
+    fun playSomethingAsksForOnePickAndKeepsItsResumePoint() = withServer(
+        mapOf("GET /api/random?profileId=p1" to (200 to randomPick)),
+    ) { api, captured ->
+        val card = api.random("p1")
+
+        assertEquals(listOf("GET /api/random?profileId=p1"), captured.map { it.line })
+        assertEquals("Breaking Bad", card?.title)
+        assertEquals("tv", card?.mediaType)
+        assertEquals(5, card?.season)
+        assertEquals(16, card?.episode)
+        assertEquals(1234.5, card?.positionSeconds)
+    }
+
+    @Test
+    fun anEmptyLibraryLeavesPlaySomethingWithNothingToPlay() = withServer(
+        mapOf("GET /api/random?profileId=p1" to (404 to """{"error":"Nothing to play yet"}""")),
+    ) { api, _ ->
+        // The 404 is the backend saying "nothing here yet", not a failure to report.
+        assertEquals(null, api.random("p1"))
+    }
 }

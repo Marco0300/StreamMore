@@ -89,6 +89,31 @@ class NewScreensTest {
     // ── (a) Upcoming ────────────────────────────────────────────────────────
 
     @Test
+    fun playSomethingSitsAtTheEndOfTheSidebarAndOnlyRunsItsAction() {
+        val destinations = mutableListOf<TvScreen>()
+        var picks = 0
+        compose.setContent {
+            Frame {
+                AppShell(TvScreen.Home, { destinations += it }, Fake.profiles[0], onPlaySomething = { picks++ }) {
+                    androidx.compose.material3.Text("Home")
+                }
+            }
+        }
+        compose.waitForIdle()
+
+        val myList = compose.onNodeWithTag("side-nav-item-my-list").fetchSemanticsNode().boundsInRoot
+        val playSomething = compose.onNodeWithTag("side-nav-item-play-something").fetchSemanticsNode().boundsInRoot
+        assertTrue("Play Something must sit below My List", myList.top < playSomething.top)
+        compose.onNodeWithContentDescription("Play Something").assertExists()
+
+        compose.onNodeWithTag("side-nav-item-play-something").performClick()
+        compose.runOnIdle {
+            assertEquals(1, picks)
+            assertEquals(emptyList<TvScreen>(), destinations)
+        }
+    }
+
+    @Test
     fun upcomingSitsDirectlyAfterNewAndHotInTheSidebarAndNavigates() {
         val destinations = mutableListOf<TvScreen>()
         compose.setContent {
