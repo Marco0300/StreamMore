@@ -156,9 +156,11 @@ data class TitleDetail(
     val introEndSeconds: Long? = null,
     val recapEndSeconds: Long? = null,
     val genres: List<String> = emptyList(),
-    val seasons: List<Season> = emptyList(),
-    val cast: List<Person> = emptyList(),
-)
+        val seasons: List<Season> = emptyList(),
+        val cast: List<Person> = emptyList(),
+        /** TMDB franchise when the server knows one; absent for standalone titles. */
+        val collection: TitleCollection? = null,
+    )
 
 internal fun formatReleaseDate(value: String?): String? {
     val parts = value?.trim()?.split('-') ?: return null
@@ -403,3 +405,157 @@ fun JSONObject.toProfile(): Profile = Profile(
     kids = optBoolean("kids", false),
     hasPin = optBoolean("hasPin", false),
 )
+
+// ── Upcoming / air dates ─────────────────────────────────────────────────────
+
+/** One airing, as `/api/calendar` reports it. `dayIndex` 0 is today, negative has aired. */
+data class CalendarEpisode(
+    val season: Int? = null,
+    val episode: Int? = null,
+    val airDate: String? = null,
+    val name: String? = null,
+    val dayIndex: Int = 0,
+    val aired: Boolean = false,
+)
+
+data class CalendarEntry(
+    val tmdbId: Int = 0,
+    val title: String = "Untitled",
+    val poster: String? = null,
+    val year: String? = null,
+    val rating: Double? = null,
+    val status: String? = null,
+    val episode: CalendarEpisode? = null,
+)
+
+data class CalendarDay(
+    val date: String = "",
+    val dayIndex: Int = 0,
+    val items: List<CalendarEntry> = emptyList(),
+)
+
+data class CalendarCounts(
+    val checked: Int = 0,
+    val upcoming: Int = 0,
+    val today: Int = 0,
+    val recent: Int = 0,
+)
+
+data class CalendarData(
+    val days: List<CalendarDay> = emptyList(),
+    val recent: List<CalendarEntry> = emptyList(),
+    val counts: CalendarCounts = CalendarCounts(),
+    val followed: Int = 0,
+    val cached: Boolean = false,
+)
+
+/** A TMDB franchise attached to a movie's detail payload. Parts are oldest first. */
+data class TitleCollection(
+    val id: Int = 0,
+    val name: String = "",
+    val overview: String? = null,
+    val poster: String? = null,
+    val parts: List<MediaCard> = emptyList(),
+)
+
+/** A person page: biography plus the two credit lists the browser renders. */
+data class PersonDetail(
+    val personId: Int = 0,
+    val name: String = "Unknown",
+    val biography: String = "",
+    val photo: String? = null,
+    val knownFor: String? = null,
+    val birthday: String? = null,
+    val placeOfBirth: String? = null,
+    val movies: List<MediaCard> = emptyList(),
+    val shows: List<MediaCard> = emptyList(),
+)
+
+fun JSONObject.toCalendarEpisode(): CalendarEpisode = CalendarEpisode(
+    season = if (has("season") && !isNull("season")) optInt("season") else null,
+    episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
+    airDate = optString("airDate", null),
+    name = optString("name", null),
+    dayIndex = optInt("dayIndex", 0),
+    aired = optBoolean("aired", false),
+)
+
+fun JSONObject.toCalendarEntry(): CalendarEntry = CalendarEntry(
+    tmdbId = optInt("tmdbId"),
+    title = optString("title", "Untitled"),
+    poster = optString("poster", null),
+    year = optString("year", null),
+    rating = doubleOrNull("rating"),
+    status = optString("status", null),
+    episode = optJSONObject("episode")?.toCalendarEpisode(),
+)
+
+fun JSONObject.toCalendarData(): CalendarData {
+    val dayValues = optJSONArray("days") ?: JSONArray()
+    val recentValues = optJSONArray("recent") ?: JSONArray()
+    val counts = optJSONObject("counts")
+    return CalendarData(
+        days = List(dayValues.length()) { index ->
+            val day = dayValues.optJSONObject(index) ?: JSONObject()
+            val items = day.optJSONArray("items") ?: JSONArray()
+            CalendarDay(
+                date = day.optString("date", ""),
+                dayIndex = day.optInt("dayIndex", 0),
+                items = List(items.length()) { itemIndex ->
+                    items.optJSONObject(itemIndex)?.toCalendarEntry() ?: CalendarEntry()
+                },
+            )
+        },
+        recent = List(recentValues.length()) { index ->
+            recentValues.optJSONObject(index)?.toCalendarEntry() ?: CalendarEntry()
+        },
+        counts = CalendarCounts(
+            checked = counts?.optInt("checked", 0) ?: 0,
+            upcoming = counts?.optInt("upcoming", 0) ?: 0,
+            today = counts?.optInt("today", 0) ?: 0,
+            recent = counts?.optInt("recent", 0) ?: 0,
+        ),
+        followed = optInt("followed", 0),
+        cached = optBoolean("cached", false),
+    )
+}
+
+fun JSONObject.toCollection(): TitleCollection {
+    val values = optJSONArray("parts") ?: JSONArray()
+    return TitleCollection(
+        id = optInt("id"),
+        name = optString("name", ""),
+        overview = optString("overview", null),
+        poster = optString("poster", null),
+        parts = List(values.length()) { index ->
+            values.optJSONObject(index)?.toMediaCard() ?: MediaCard("movie", 0, "Untitled")
+        },
+    )
+}
+
+fun JSONObject.toPersonDetail(): PersonDetail {
+    val credits = optJSONObject("credits")
+    val movieValues = credits?.optJSONArray("movie") ?: JSONArray()
+    val showValues = credits?.optJSONArray("tv") ?: JSONArray()
+    return PersonDetail(
+        personId = optInt("personId"),
+        name = optString("name", "Unknown"),
+        biography = optString("biography", ""),
+        photo = optString("profile", null),
+        knownFor = optString("knownFor", null),
+        birthday = optString("birthday", null),
+        placeOfBirth = optString("placeOfBirth", null),
+        movies = List(movieValues.length()) { index ->
+            movieValues.optJSONObject(index)?.toMediaCard() ?: MediaCard("movie", 0, "Untitled")
+        },
+        shows = List(showValues.length()) { index ->
+            showValues.optJSONObject(index)?.toMediaCard() ?: MediaCard("tv", 0, "Untitled")
+        },
+    )
+}
+
+/** `channelIds` from the Live TV favourites routes. */
+fun JSONObject.toChannelIds(): List<String> {
+    val values = optJSONArray("channelIds") ?: JSONArray()
+    return List(values.length()) { index -> values.optString(index) }.filter { it.isNotBlank() }
+}

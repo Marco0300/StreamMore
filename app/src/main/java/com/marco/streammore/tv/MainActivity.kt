@@ -345,10 +345,12 @@ internal sealed interface TvScreen {
     data class Browse(val mediaType: String) : TvScreen
     data object Search : TvScreen
     data object NewHot : TvScreen
-    data object MyList : TvScreen
+        data object Upcoming : TvScreen
+        data object MyList : TvScreen
 
     data object Live : TvScreen
     data class Detail(val mediaType: String, val tmdbId: Int) : TvScreen
+    data class Person(val personId: Int) : TvScreen
     data class Player(
         val source: String,
         val title: String,
@@ -392,10 +394,12 @@ private fun routeStateKey(screen: TvScreen): String = when (screen) {
     is TvScreen.Browse -> "browse:${screen.mediaType}"
     TvScreen.Search -> "search"
     TvScreen.NewHot -> "new-hot"
-    TvScreen.MyList -> "my-list"
+        TvScreen.Upcoming -> "upcoming"
+        TvScreen.MyList -> "my-list"
 
     TvScreen.Live -> "live"
     is TvScreen.Detail -> "detail:${screen.mediaType}:${screen.tmdbId}"
+    is TvScreen.Person -> "person:${screen.personId}"
     is TvScreen.Player -> "player"
 }
 
@@ -433,6 +437,11 @@ internal fun StreammoreTvApp() {
     var detail by remember { mutableStateOf<TitleDetail?>(null) }
     var episodes by remember { mutableStateOf<List<Episode>>(emptyList()) }
     var liveChannels by remember { mutableStateOf<List<LiveChannel>>(emptyList()) }
+    var liveFavouriteIds by remember { mutableStateOf<List<String>>(emptyList()) }
+    var upcoming by remember { mutableStateOf<CalendarData?>(null) }
+    var person by remember { mutableStateOf<PersonDetail?>(null) }
+    var personLoading by remember { mutableStateOf(false) }
+    var personReturn by remember { mutableStateOf<TvScreen>(TvScreen.Home) }
 
     var error by remember { mutableStateOf<String?>(null) }
     var loading by remember { mutableStateOf(false) }
@@ -587,8 +596,47 @@ internal fun StreammoreTvApp() {
             }
             .onFailure { error = it.message ?: "Could not load title" }
         loading = false
-    }
-    fun play(
+            }
+            fun openCalendarEntry(entry: CalendarEntry) = openDetail(calendarCard(entry))
+            fun loadUpcoming() = scope.launch {
+                val id = profileId ?: return@launch
+                error = null
+                screen = TvScreen.Upcoming; loading = true
+                runCatching { api.calendar(id) }.onSuccess { upcoming = it }
+                    .onFailure { error = it.message ?: "Could not load upcoming episodes" }
+                loading = false
+            }
+            fun loadLiveFavourites() {
+                val id = profileId ?: return
+                scope.launch {
+                    // A 403 or a channel that left the catalogue only costs the star
+                    // state; the channel grid must still come up.
+                    runCatching { api.liveFavourites(id) }.onSuccess { liveFavouriteIds = it }
+                }
+            }
+            fun toggleLiveFavourite(channel: LiveChannel) {
+                val id = profileId ?: return
+                val pinned = isFavourite(liveFavouriteIds, channel)
+                scope.launch {
+                    runCatching {
+                        if (pinned) api.removeLiveFavourite(id, channel.channelId)
+                        else api.addLiveFavourite(id, channel.channelId)
+                    }
+                        .onSuccess { liveFavouriteIds = it }
+                        .onFailure { error = it.message ?: "Could not update favourites" }
+                }
+            }
+            fun openPerson(card: Person) = scope.launch {
+                val id = profileId ?: return@launch
+                error = null; person = null; personLoading = true
+                personReturn = screen
+                screen = TvScreen.Person(card.id)
+                runCatching { api.person(card.id, id) }
+                    .onSuccess { person = it }
+                    .onFailure { error = it.message ?: "Could not load this person" }
+                personLoading = false
+            }
+            fun play(
         mediaType: String,
         tmdbId: Int,
         title: String,
@@ -692,8 +740,9 @@ internal fun StreammoreTvApp() {
         error = null
         screen = TvScreen.Live; loading = true
         runCatching { api.liveChannels(id) }.onSuccess { liveChannels = it }
-            .onFailure { error = it.message ?: "Could not load Live TV" }
-        loading = false
+                    .onFailure { error = it.message ?: "Could not load Live TV" }
+                loadLiveFavourites()
+                loading = false
     }
     fun playLive(channel: LiveChannel) = scope.launch {
         if (!liveTvEnabled) {
@@ -819,6 +868,7 @@ internal fun StreammoreTvApp() {
             is TvScreen.Browse -> loadCards(target.mediaType)
             TvScreen.MyList -> loadMyList()
             TvScreen.NewHot -> loadNewHot()
+            TvScreen.Upcoming -> loadUpcoming()
 
             TvScreen.Live -> loadLive()
             TvScreen.Search, TvScreen.Profiles -> screen = target
@@ -915,7 +965,27 @@ internal fun StreammoreTvApp() {
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
                     TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
 
-                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { LiveScreen(liveChannels, error, ::playLive, ::loadLive) }
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
+                        LiveScreen(
+                            liveChannels, error, ::playLive, ::loadLive,
+                            favouriteIds = liveFavouriteIds,
+                            onToggleFavourite = ::toggleLiveFavourite,
+                        )
+                    }
+                    TvScreen.Upcoming -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
+                        UpcomingScreen(upcoming, error, ::openCalendarEntry)
+                    }
+                    is TvScreen.Person -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
+                        when {
+                            personLoading && person == null -> LoadingScreen(error)
+                            person == null -> LoadingScreen(error ?: "Could not load this person")
+                            else -> PersonScreen(
+                                person!!, error,
+                                onBack = { screen = personReturn },
+                                onCard = ::openDetail,
+                            )
+                        }
+                    }
                     is TvScreen.Detail -> {
                         val active = detail
                         if (active == null) LoadingScreen(error) else DetailScreen(
@@ -994,7 +1064,9 @@ internal fun StreammoreTvApp() {
                             { profileId?.let { id -> scope.launch { val added = api.toggleList(id, MediaCard(active.mediaType, active.tmdbId, active.title, active.poster, active.backdrop, active.year, active.rating)); detail = active.copy(inMyList = added) } } },
                             { playTrailer(active.mediaType, active.tmdbId, active.title) },
                             { value -> profileId?.let { id -> scope.launch { detail = active.copy(myRating = api.rate(id, active.mediaType, active.tmdbId, value)) } } },
-                        )
+                                                        onPerson = ::openPerson,
+                                                        onCollectionPart = ::openDetail,
+                                                    )
                     }
                     is TvScreen.Player -> PlayerScreen(
                         current.source,
@@ -1092,7 +1164,7 @@ internal fun StreammoreTvApp() {
                 }
                 }
                 if (loading && screen !is TvScreen.Player) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Purple)
-                if (error != null && screen !is TvScreen.Login && screen !is TvScreen.Live && screen !is TvScreen.Detail && screen !is TvScreen.Player) {
+                if (error != null && screen !is TvScreen.Login && screen !is TvScreen.Live && screen !is TvScreen.Detail && screen !is TvScreen.Player && screen !is TvScreen.Upcoming && screen !is TvScreen.Person) {
                     ErrorBanner(error!!, Modifier.align(Alignment.BottomCenter))
                 }
                 if (availableUpdate != null && !updateDismissed) {
@@ -1149,6 +1221,7 @@ internal fun AppShell(
         SideNavDestination("search", "Search", R.drawable.ic_search, TvScreen.Search, screen is TvScreen.Search),
         SideNavDestination("home", "Home", R.drawable.ic_nav_home, TvScreen.Home, screen is TvScreen.Home),
         SideNavDestination("new-hot", "New & Hot", R.drawable.ic_nav_trending, TvScreen.NewHot, screen is TvScreen.NewHot),
+        SideNavDestination("upcoming", "Upcoming", R.drawable.ic_nav_my_list, TvScreen.Upcoming, screen is TvScreen.Upcoming),
         SideNavDestination("tv-shows", "TV Shows", R.drawable.ic_nav_tv, TvScreen.Browse("tv"), screen is TvScreen.Browse && screen.mediaType == "tv"),
         SideNavDestination("movies", "Movies", R.drawable.ic_nav_movies, TvScreen.Browse("movie"), screen is TvScreen.Browse && screen.mediaType == "movie"),
         SideNavDestination("live-tv", "Live TV", R.drawable.ic_nav_live_tv, TvScreen.Live, screen is TvScreen.Live),
@@ -2670,22 +2743,16 @@ internal fun LiveScreen(
     error: String?,
     onPlay: (LiveChannel) -> Unit,
     onRefresh: () -> Unit,
+    favouriteIds: List<String> = emptyList(),
+    onToggleFavourite: (LiveChannel) -> Unit = {},
 ) {
     var search by rememberSaveable { mutableStateOf("") }
     var selectedCategory by rememberSaveable { mutableStateOf("All") }
     var focusChannelsAfterCategoryChange by rememberSaveable { mutableStateOf(false) }
-    val categories = remember(channels) {
-        listOf("All") + channels.map { it.genre }.filter { it.isNotBlank() }.distinct().sorted()
-    }
-    val activeCategory = selectedCategory.takeIf { it in categories } ?: "All"
-    val activeCategoryIndex = categories.indexOf(activeCategory).coerceAtLeast(0)
-    val filteredChannels = channels.filter { channel ->
-        val matchesCategory = activeCategory == "All" || channel.genre == activeCategory
-        val needle = search.trim()
-        val matchesSearch = needle.isBlank() || channel.name.contains(needle, ignoreCase = true) ||
-            channel.genre.contains(needle, ignoreCase = true) || channel.country.contains(needle, ignoreCase = true)
-        matchesCategory && matchesSearch
-    }
+    val categories = remember(channels) { liveCategories(channels) }
+        val activeCategory = selectedCategory.takeIf { it in categories } ?: "All"
+        val activeCategoryIndex = categories.indexOf(activeCategory).coerceAtLeast(0)
+        val filteredChannels = liveFilteredChannels(channels, activeCategory, search, favouriteIds)
     val firstChannel = remember { FocusRequester() }
     val gridState = rememberLazyGridState()
     var focusedChannelId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -2797,26 +2864,43 @@ internal fun LiveScreen(
                                 } else false
                             }
                             .onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
+                        Column {
                         TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
-                            Text("📺", fontSize = 24.sp)
-                            Spacer(Modifier.height(4.dp))
-                            Text(channel.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            channel.nowPlaying?.let { programme ->
-                                Text(
-                                    "NOW ${programme.title}",
-                                    color = Purple,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                ProgrammeProgress(programme)
-                            }
-                            channel.nextPlaying?.title?.takeIf { it.isNotBlank() }?.let { next ->
-                                Text("NEXT $next", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
-                            Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
+                                                    Text("📺", fontSize = 24.sp)
+                                                    Spacer(Modifier.height(4.dp))
+                                                    Text(channel.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    channel.nowPlaying?.let { programme ->
+                                                        Text(
+                                                            "NOW ${programme.title}",
+                                                            color = Purple,
+                                                            fontSize = 13.sp,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis,
+                                                        )
+                                                        ProgrammeProgress(programme)
+                                                    }
+                                                    channel.nextPlaying?.title?.takeIf { it.isNotBlank() }?.let { next ->
+                                                        Text("NEXT $next", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    }
+                                                    Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                }
+                                                val pinned = isFavourite(favouriteIds, channel)
+                                                TvButton(
+                                                    onClick = { onToggleFavourite(channel) },
+                                                    modifier = Modifier
+                                                        .padding(top = 4.dp)
+                                                        .semantics {
+                                                            contentDescription = if (pinned) "Remove from favourites" else "Add to favourites"
+                                                        },
+                                                ) {
+                                                    Text(
+                                                        if (pinned) "★ Favourite" else "☆ Favourite",
+                                                        color = if (pinned) Purple else Muted,
+                                                        fontSize = 12.sp,
+                                                                                                            )
+                                                                                                        }
+                                                                                }
                     }
                 }
             }
@@ -2836,7 +2920,9 @@ internal fun DetailScreen(
     onList: () -> Unit,
     onTrailer: () -> Unit,
     onRate: (String?) -> Unit,
-) {
+        onPerson: (Person) -> Unit = {},
+        onCollectionPart: (MediaCard) -> Unit = {},
+    ) {
     var selectedSeason by remember(detail.tmdbId) { mutableStateOf(detail.resumeSeason ?: detail.seasons.firstOrNull()?.number ?: 1) }
     // Opening a title otherwise leaves nothing focused, so the first D-pad press
     // lands on "Back" and pressing OK appears to do nothing. Start on Play.
@@ -2863,7 +2949,8 @@ internal fun DetailScreen(
         )
 
         LazyColumn(
-            contentPadding = PaddingValues(horizontal = 60.dp, vertical = 20.dp),
+                    modifier = Modifier.testTag("detail-content"),
+                    contentPadding = PaddingValues(horizontal = 60.dp, vertical = 20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             item {
@@ -2938,7 +3025,19 @@ internal fun DetailScreen(
                 }
             }
 
-            if (detail.mediaType == "tv" && detail.seasons.isNotEmpty()) {
+                        val franchise = collectionParts(detail.collection)
+                        if (franchise.isNotEmpty()) {
+                            item {
+                                CollectionRow(
+                                    title = detail.collection?.name.orEmpty(),
+                                    parts = franchise,
+                                    currentId = detail.tmdbId,
+                                    onPart = onCollectionPart,
+                                )
+                            }
+                        }
+
+                        if (detail.mediaType == "tv" && detail.seasons.isNotEmpty()) {
                 item {
                     Column {
                         Text("Episodes", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -2974,7 +3073,7 @@ internal fun DetailScreen(
                         Text("Cast", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(10.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                            items(detail.cast) { person -> CastCard(person) }
+                            items(detail.cast) { person -> CastCard(person) { onPerson(person) } }
                         }
                     }
                 }
@@ -3054,8 +3153,12 @@ private fun EpisodeRow(episode: Episode, onClick: () -> Unit) {
 }
 
 @Composable
-private fun CastCard(person: Person) {
-    Column(Modifier.width(108.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+private fun CastCard(person: Person, onClick: () -> Unit = {}) {
+    TvCard(
+        onClick = onClick,
+        modifier = Modifier.width(116.dp).testTag("cast-card-${person.id}"),
+        contentPadding = PaddingValues(8.dp),
+    ) {
         AsyncImage(
             person.profile, person.name,
             Modifier.size(88.dp).clip(CircleShape).background(Panel),
@@ -4197,3 +4300,259 @@ internal fun SkipSegmentPrompt(
 }
 
 internal fun listOfNotNull(vararg values: Any?): List<String> = values.filterNotNull().map { it.toString() }
+
+// ── Upcoming ────────────────────────────────────────────────────────────────
+
+@Composable
+internal fun UpcomingScreen(data: CalendarData?, error: String?, onEntry: (CalendarEntry) -> Unit) {
+    val sections = remember(data) { upcomingSections(data) }
+    val firstEntry = remember { FocusRequester() }
+    LaunchedEffect(sections.size) {
+        if (sections.isNotEmpty()) runCatching { firstEntry.requestFocus() }
+    }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Gutter),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Upcoming", color = TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(18.dp))
+            Text(calendarTotalLabel(data?.counts?.upcoming ?: 0), color = Muted, fontSize = 15.sp)
+        }
+        Spacer(Modifier.height(6.dp))
+        data?.let {
+            Text(
+                "Air dates for the ${it.followed} shows you are watching · refreshed periodically.",
+                color = Muted,
+                fontSize = 14.sp,
+            )
+        }
+        if (error != null) {
+            Spacer(Modifier.height(10.dp))
+            Text(error, color = Color(0xFFFF8A80), fontSize = 14.sp)
+        }
+        Spacer(Modifier.height(18.dp))
+
+        if (sections.isEmpty()) {
+            Text(
+                upcomingEmptyMessage(data?.followed ?: 0),
+                color = Muted,
+                fontSize = 16.sp,
+                modifier = Modifier.padding(vertical = 40.dp).testTag("upcoming-empty"),
+            )
+            return@Column
+        }
+
+        var first = true
+        sections.forEach { section ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(section.title, color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(10.dp))
+                Text(calendarTotalLabel(section.count), color = Muted, fontSize = 13.sp)
+            }
+            Spacer(Modifier.height(8.dp))
+            section.entries.forEach { entry ->
+                UpcomingEntryCard(entry, section.aired, if (first) firstEntry else null, onEntry)
+                first = false
+                Spacer(Modifier.height(10.dp))
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun UpcomingEntryCard(
+    entry: CalendarEntry,
+    aired: Boolean,
+    focusRequester: FocusRequester?,
+    onEntry: (CalendarEntry) -> Unit,
+) {
+    var modifier = Modifier.fillMaxWidth().testTag("upcoming-entry-${entry.tmdbId}")
+    if (focusRequester != null) modifier = modifier.focusRequester(focusRequester)
+    TvCard(
+        onClick = { onEntry(entry) },
+        modifier = modifier,
+        contentPadding = PaddingValues(10.dp),
+        horizontalAlignment = Alignment.Start,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                entry.poster, entry.title,
+                Modifier
+                    .width(52.dp)
+                    .height(74.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Panel),
+                contentScale = ContentScale.Crop,
+            )
+            Column(Modifier.padding(start = 14.dp).weight(1f)) {
+                Text(
+                    entry.title,
+                    color = TextPrimary,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                val code = episodeCode(entry.episode)
+                val episodeName = entry.episode?.name.orEmpty()
+                val line = listOf(code, episodeName).filter { it.isNotBlank() }.joinToString(" · ")
+                if (line.isNotBlank()) {
+                    Text(line, color = TextPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    "${calendarDayLabel(entry.episode?.airDate, entry.episode?.dayIndex ?: 0)} · ${entry.episode?.airDate.orEmpty()}",
+                    color = if (aired) Muted else Purple,
+                    fontSize = 12.5.sp,
+                )
+            }
+        }
+    }
+}
+
+// ── Person ──────────────────────────────────────────────────────────────────
+
+@Composable
+internal fun PersonScreen(
+    person: PersonDetail,
+    error: String?,
+    onBack: () -> Unit,
+    onCard: (MediaCard) -> Unit,
+) {
+    var expanded by remember(person.personId) { mutableStateOf(false) }
+    BackHandler(onBack = onBack)
+
+    Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
+        TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
+            Text("‹ Back", color = Muted, fontSize = 14.sp)
+        }
+        LazyColumn(Modifier.testTag("person-content")) {
+            item {
+                Row {
+                    AsyncImage(
+                        person.photo, person.name,
+                        Modifier
+                            .size(150.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(Panel),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Column(Modifier.padding(start = 22.dp)) {
+                        Text(person.name, color = TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        val facts = personFacts(person)
+                        if (facts.isNotBlank()) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(facts, color = Muted, fontSize = 14.sp)
+                        }
+                        if (person.biography.isNotBlank()) {
+                                        Spacer(Modifier.height(10.dp))
+                                        Text(
+                                            clampBiography(person.biography, expanded),
+                                            color = TextPrimary,
+                                            fontSize = 13.5.sp,
+                                            maxLines = if (expanded) Int.MAX_VALUE else 6,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        if (person.biography.length > BiographyClamp) {
+                                            Spacer(Modifier.height(6.dp))
+                                            TvButton(onClick = { expanded = !expanded }) {
+                                                Text(if (expanded) "Show less" else "Read more", fontSize = 12.5.sp)
+                                            }
+                                        }
+                                    }
+                    }
+                }
+            }
+            if (error != null) {
+                item { Text(error, color = Color(0xFFFF8A80), fontSize = 14.sp) }
+            }
+            if (person.movies.isNotEmpty()) {
+                item {
+                    Column {
+                        Spacer(Modifier.height(20.dp))
+                        Text("Movies (${person.movies.size})", color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        PersonCreditGrid(person.movies, onCard)
+                    }
+                }
+            }
+            if (person.shows.isNotEmpty()) {
+                item {
+                    Column {
+                        Spacer(Modifier.height(20.dp))
+                        Text("TV Shows (${person.shows.size})", color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(10.dp))
+                        PersonCreditGrid(person.shows, onCard)
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(30.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun PersonCreditGrid(cards: List<MediaCard>, onCard: (MediaCard) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        cards.chunked(5).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                row.forEach { card ->
+                    MediaCardView(
+                        card = card,
+                        onClick = onCard,
+                        modifier = Modifier.testTag("person-card-${card.tmdbId}"),
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ── Franchise row on the movie detail screen ────────────────────────────────
+
+@Composable
+private fun CollectionRow(
+    title: String,
+    parts: List<MediaCard>,
+    currentId: Int,
+    onPart: (MediaCard) -> Unit,
+) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                title.ifBlank { "Collection" },
+                color = TextPrimary,
+                fontSize = 21.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.width(12.dp))
+            Text("${parts.size} films", color = Muted, fontSize = 13.sp)
+        }
+        Spacer(Modifier.height(10.dp))
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            items(parts) { part ->
+                Column {
+                    MediaCardView(
+                        card = part,
+                        onClick = onPart,
+                        modifier = Modifier.testTag("collection-part-${part.tmdbId}"),
+                    )
+                    val current = part.tmdbId == currentId
+                    Text(
+                        if (current) "You are here" else collectionMeta(part),
+                        color = if (current) Purple else Muted,
+                        fontSize = 11.5.sp,
+                        fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+        }
+    }
+}

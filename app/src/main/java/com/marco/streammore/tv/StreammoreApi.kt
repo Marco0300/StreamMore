@@ -114,7 +114,8 @@ class StreammoreApi(
                     Season(s.optInt("seasonNumber"), s.optString("name"), s.optInt("episodeCount"))
                 },
                 cast = List(castJson.length()) { castJson.getJSONObject(it).toPerson() },
-            )
+                                collection = body.optJSONObject("collection")?.toCollection(),
+                            )
         }
 
     suspend fun season(tmdbId: Int, season: Int, profileId: String): List<Episode> =
@@ -320,9 +321,38 @@ class StreammoreApi(
     }
 
     suspend fun newHot(profileId: String): List<HomeRow> = withContext(Dispatchers.IO) {
-        val body = get("/api/new-hot?profileId=${enc(profileId)}")
-        parseRows(body.optJSONArray("rows") ?: JSONArray())
-    }
+            val body = get("/api/new-hot?profileId=${enc(profileId)}")
+            parseRows(body.optJSONArray("rows") ?: JSONArray())
+        }
+
+        // ── Upcoming air dates ───────────────────────────────────────────────────
+
+        suspend fun calendar(profileId: String): CalendarData = withContext(Dispatchers.IO) {
+            get("/api/calendar?profileId=${enc(profileId)}").toCalendarData()
+        }
+
+        // ── Live TV favourites (per profile) ─────────────────────────────────────
+
+        suspend fun liveFavourites(profileId: String): List<String> = withContext(Dispatchers.IO) {
+            get("/api/livetv/favourites?profileId=${enc(profileId)}").toChannelIds()
+        }
+
+        suspend fun addLiveFavourite(profileId: String, channelId: String): List<String> = withContext(Dispatchers.IO) {
+            post("/api/livetv/favourites", JSONObject().apply {
+                put("profileId", profileId)
+                put("channelId", channelId)
+            }).toChannelIds()
+        }
+
+        suspend fun removeLiveFavourite(profileId: String, channelId: String): List<String> = withContext(Dispatchers.IO) {
+            delete("/api/livetv/favourites/${enc(channelId)}?profileId=${enc(profileId)}").toChannelIds()
+        }
+
+        // ── Person pages ─────────────────────────────────────────────────────────
+
+        suspend fun person(personId: Int, profileId: String): PersonDetail = withContext(Dispatchers.IO) {
+            get("/api/person/$personId?profileId=${enc(profileId)}").toPersonDetail()
+        }
 
     suspend fun liveChannels(profileId: String): List<LiveChannel> = withContext(Dispatchers.IO) {
         val body = get("/api/livetv/channels?profileId=${enc(profileId)}")

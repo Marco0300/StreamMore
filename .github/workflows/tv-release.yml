@@ -128,8 +128,9 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Adds optional TV code sign-in: enter the code shown on TV at Account → Link a TV.
-            - Keeps email/password sign-in available and retries when a pairing code expires.
+            - Adds an Upcoming screen listing air dates for the shows you watch, with a "Just aired" section.
+            - Adds favourite channels on Live TV, kept per profile.
+            - Adds a franchise row on movie pages and a Person page for cast members.
 
             SHA-256: `${{ env.SHA256 }}`
 
