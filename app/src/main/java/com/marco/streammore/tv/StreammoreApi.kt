@@ -82,14 +82,14 @@ class StreammoreApi(
                 tmdbId = body.optInt("tmdbId", tmdbId),
                 title = body.optString("title", "Untitled"),
                 overview = body.optString("overview", ""),
-                backdrop = body.optString("backdrop", null),
-                poster = body.optString("poster", null),
-                year = body.optString("year", null),
+                backdrop = body.stringOrNull("backdrop"),
+                poster = body.stringOrNull("poster"),
+                year = body.stringOrNull("year"),
                 rating = if (body.has("rating") && !body.isNull("rating")) body.optDouble("rating") else null,
                 runtime = if (body.has("runtime") && !body.isNull("runtime")) body.optInt("runtime") else null,
-                tagline = body.optString("tagline", null),
+                tagline = body.stringOrNull("tagline"),
                 inMyList = body.optBoolean("inMyList", false),
-                myRating = body.optString("myRating", null),
+                myRating = body.stringOrNull("myRating"),
                 progress = progressJson?.optDouble("percent", 0.0) ?: 0.0,
                 resumePositionMs = progressJson?.let { progress ->
                     resumablePositionMs(
@@ -105,7 +105,7 @@ class StreammoreApi(
                         ?: progressFraction(progress.doubleOrNull("position"), progress.doubleOrNull("duration"))
                     percent >= 0.95 && progress.optJSONObject("upNext")?.toResumePoint() != null
                 } ?: false,
-                releaseDate = body.optString("releaseDate", null),
+                releaseDate = body.stringOrNull("releaseDate"),
                 introEndSeconds = marker?.doubleOrNull("introEnd")?.toLong(),
                 recapEndSeconds = marker?.doubleOrNull("recapEnd")?.toLong(),
                 genres = body.toGenreNames(),
@@ -129,9 +129,9 @@ class StreammoreApi(
                 Episode(
                     number = e.optInt("number"),
                     name = e.optString("name", "Episode ${it + 1}"),
-                    overview = e.optString("overview", null),
-                    still = e.optString("still", null),
-                    airDate = e.optString("airDate", null),
+                    overview = e.stringOrNull("overview"),
+                    still = e.stringOrNull("still"),
+                    airDate = e.stringOrNull("airDate"),
                     progress = fraction,
                     watched = isWatchedProgress(fraction),
                     positionMs = resumablePositionMs(
@@ -155,15 +155,15 @@ class StreammoreApi(
      */
     suspend fun trailerPlayback(mediaType: String, tmdbId: Int): TrailerPlayback? = withContext(Dispatchers.IO) {
         val body = get("/api/trailer/$mediaType/$tmdbId?audio=1")
-        body.optString("url", null)?.takeIf { it.isNotBlank() }?.let { video ->
-            TrailerPlayback(video, body.optString("audioUrl", null)?.takeIf { it.isNotBlank() })
+        body.stringOrNull("url")?.takeIf { it.isNotBlank() }?.let { video ->
+            TrailerPlayback(video, body.stringOrNull("audioUrl")?.takeIf { it.isNotBlank() })
         }
     }
 
     suspend fun trailer(mediaType: String, tmdbId: Int, withAudio: Boolean = false): String? = withContext(Dispatchers.IO) {
         val suffix = if (withAudio) "?audio=1" else ""
         val body = get("/api/trailer/$mediaType/$tmdbId$suffix")
-        body.optString("url", null)?.takeIf { it.isNotBlank() }
+        body.stringOrNull("url")?.takeIf { it.isNotBlank() }
     }
 
     suspend fun streams(mediaType: String, tmdbId: Int, profileId: String, playbackId: String? = null, season: Int? = null, episode: Int? = null): List<StreamSource> =
@@ -294,7 +294,7 @@ class StreammoreApi(
             put("tmdbId", tmdbId)
             if (value == null) put("value", JSONObject.NULL) else put("value", value)
         })
-        if (body.isNull("rating")) null else body.optString("rating", null)
+        if (body.isNull("rating")) null else body.stringOrNull("rating")
     }
 
     suspend fun unlockProfile(profileId: String, pin: String): Boolean = withContext(Dispatchers.IO) {
@@ -376,7 +376,7 @@ class StreammoreApi(
         val categories = body.optJSONArray("categories") ?: JSONArray()
         LiveSchedule(
             available = body.optBoolean("available", categories.length() > 0),
-            reason = body.optString("reason", null),
+            reason = body.stringOrNull("reason"),
             categories = List(categories.length()) { categoryIndex ->
                 val category = categories.getJSONObject(categoryIndex)
                 val events = category.optJSONArray("events") ?: JSONArray()
@@ -388,8 +388,8 @@ class StreammoreApi(
                         val eventChannels = event.optJSONArray("channels") ?: JSONArray()
                         LiveEvent(
                             id = event.optString("id", "$categoryIndex-$eventIndex"),
-                            time = event.optString("time", null),
-                            localTime = event.optString("localTime", null),
+                            time = event.stringOrNull("time"),
+                            localTime = event.stringOrNull("localTime"),
                             title = event.optString("title", "Live event"),
                             isLive = event.optBoolean("isLive", false),
                             channelIds = List(eventChannels.length()) { channelIndex ->
@@ -458,7 +458,7 @@ class StreammoreApi(
             doInput = true
             useCaches = false
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Streammore-TV/0.1.0")
+            setRequestProperty("User-Agent", "Streammore-TV/${BuildConfig.VERSION_NAME}")
             cookie?.let { setRequestProperty("Cookie", it) }
             if (body != null) {
                 doOutput = true

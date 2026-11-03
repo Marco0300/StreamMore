@@ -3401,8 +3401,16 @@ internal fun PlayerScreen(
     val player = remember(source, audioSource, trackSelector) {
         // Subtitle files come from the authenticated /api/subtitles/file route, so
         // ExoPlayer's own requests have to carry the session cookie.
-        val headers = if (cookie.isNullOrBlank()) emptyMap() else mapOf("Cookie" to cookie)
-        val dataSourceFactory = DefaultHttpDataSource.Factory().setDefaultRequestProperties(headers)
+        // Only the Streammore host gets it: stream URLs can point at third-party hosts.
+        val httpFactory = DefaultHttpDataSource.Factory()
+        val dataSourceFactory: androidx.media3.datasource.DataSource.Factory =
+            if (cookie.isNullOrBlank()) httpFactory else androidx.media3.datasource.ResolvingDataSource.Factory(httpFactory) { dataSpec ->
+                if (shouldSendSessionCookie(dataSpec.uri.toString(), BuildConfig.STREAMMORE_BASE_URL)) {
+                    dataSpec.withAdditionalHeaders(mapOf("Cookie" to cookie))
+                } else {
+                    dataSpec
+                }
+            }
         val mediaSourceFactory = DefaultMediaSourceFactory(dataSourceFactory)
         val loadControl = if (source.contains("/api/livetv/xtream/") && source.contains(".remux.ts")) {
             // Xtream remux sessions replay a rolling ten-second history to every

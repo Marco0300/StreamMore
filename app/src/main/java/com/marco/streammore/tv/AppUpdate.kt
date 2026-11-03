@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.StatFs
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
@@ -74,6 +75,21 @@ internal fun selectLatestTvRelease(releases: List<TvReleaseCandidate>): TvReleas
         .filter { !it.draft && !it.prerelease && isTvApkAsset(it.assetName) }
         .maxWithOrNull(Comparator { left, right -> compareVersionNames(left.versionName, right.versionName) })
 
+/**
+ * Android refuses an install once free space would fall under its low-storage
+ * threshold (10% of the data partition, capped at 500 MB) even for a small APK, and
+ * the installer reports it as a generic parse error. The staged copy needs room on
+ * top of the downloaded one.
+ */
+internal fun requiredFreeBytes(apkBytes: Long, totalBytes: Long): Long =
+    apkBytes + minOf(totalBytes / 10, 500L * 1024 * 1024)
+
+internal fun insufficientStorageMessage(requiredBytes: Long, freeBytes: Long): String {
+    val missingMb = ((requiredBytes - freeBytes) / (1024 * 1024)).coerceAtLeast(1)
+    return "Not enough storage to install the update. Free up about $missingMb MB " +
+        "(uninstall an unused app or clear its data), then try again"
+}
+
 internal fun isNewerVersion(latest: String, current: String): Boolean {
     return versionParts(latest).zip(versionParts(current)).firstOrNull { it.first != it.second }?.let {
         it.first > it.second
@@ -137,6 +153,8 @@ internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.I
 
 internal suspend fun downloadAndInstallUpdate(context: Context, update: AppUpdate) = withContext(Dispatchers.IO) {
     val updatesDir = File(context.cacheDir, "updates").apply { mkdirs() }
+    // Earlier downloads are never reused; each one is a full APK in scarce TV storage.
+    updatesDir.listFiles()?.forEach { it.delete() }
     val apk = File(updatesDir, "streammore-${update.versionName}.apk")
     val connection = (URL(update.downloadUrl).openConnection() as HttpURLConnection).apply {
         requestMethod = "GET"
@@ -161,6 +179,13 @@ internal suspend fun downloadAndInstallUpdate(context: Context, update: AppUpdat
             apk.delete()
             throw SecurityException("Downloaded update checksum did not match GitHub")
         }
+    }
+
+    val stats = StatFs(context.cacheDir.path)
+    val required = requiredFreeBytes(apk.length(), stats.totalBytes)
+    if (stats.availableBytes < required) {
+        apk.delete()
+        throw IllegalStateException(insufficientStorageMessage(required, stats.availableBytes))
     }
 
     withContext(Dispatchers.Main) {

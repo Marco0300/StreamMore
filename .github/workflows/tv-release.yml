@@ -128,9 +128,9 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Adds an Upcoming screen listing air dates for the shows you watch, with a "Just aired" section.
-            - Adds favourite channels on Live TV, kept per profile.
-            - Adds a franchise row on movie pages and a Person page for cast members.
+            - Fixes posters and text fields showing "null" when the server sends no value.
+            - Sends the sign-in cookie only to the Streammore server, not to stream hosts.
+            - Update installer clears old downloads and warns when the TV is too full to install.
 
             SHA-256: `${{ env.SHA256 }}`
 

@@ -264,6 +264,14 @@ fun JSONObject.toGenreNames(): List<String> {
 fun JSONObject.intOrNull(name: String): Int? =
     if (has(name)) optInt(name, 0).takeIf { it > 0 } else null
 
+/**
+ * Android's org.json returns the text "null" from optString(name, null) when the
+ * server sent a JSON null (the reference org.json used by the unit tests returns
+ * the fallback instead), so a missing poster would load an image named "null".
+ */
+fun JSONObject.stringOrNull(name: String): String? =
+    if (has(name) && !isNull(name)) optString(name).takeUnless { it == "null" } else null
+
 fun JSONObject.doubleOrNull(name: String): Double? =
     if (has(name) && !isNull(name)) optDouble(name).takeUnless { it.isNaN() } else null
 
@@ -347,16 +355,16 @@ fun JSONObject.toMediaCard(): MediaCard = MediaCard(
     mediaType = optString("mediaType", "movie"),
     tmdbId = optInt("tmdbId"),
     title = optString("title", "Untitled"),
-    poster = optString("poster", null),
-    backdrop = optString("backdrop", null),
-    year = optString("year", null),
+    poster = stringOrNull("poster"),
+    backdrop = stringOrNull("backdrop"),
+    year = stringOrNull("year"),
     rating = if (has("rating") && !isNull("rating")) optDouble("rating") else null,
-    sub = optString("sub", null),
+    sub = stringOrNull("sub"),
     percent = optDouble("percent", 0.0),
-    ribbon = optString("ribbon", null),
+    ribbon = stringOrNull("ribbon"),
     season = if (has("season") && !isNull("season")) optInt("season") else null,
     episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
-    episodeTitle = optString("episodeTitle", null),
+    episodeTitle = stringOrNull("episodeTitle"),
     positionSeconds = if (has("position") && !isNull("position")) optDouble("position") else null,
     durationSeconds = if (has("duration") && !isNull("duration")) optDouble("duration") else null,
 )
@@ -384,24 +392,24 @@ fun JSONObject.toBillboard(): Billboard = Billboard(
     tmdbId = optInt("tmdbId"),
     title = optString("title", "Untitled"),
     overview = optString("overview", ""),
-    backdrop = optString("backdrop", null),
-    poster = optString("poster", null),
-    year = optString("year", null),
+    backdrop = stringOrNull("backdrop"),
+    poster = stringOrNull("poster"),
+    year = stringOrNull("year"),
     rating = if (has("rating") && !isNull("rating")) optDouble("rating") else null,
-    trailerKey = optString("trailerKey", null),
+    trailerKey = stringOrNull("trailerKey"),
 )
 
 fun JSONObject.toPerson(): Person = Person(
     id = optInt("id"),
     name = optString("name", "Unknown"),
     character = optString("character", ""),
-    profile = optString("profile", null),
+    profile = stringOrNull("profile"),
 )
 
 fun JSONObject.toProfile(): Profile = Profile(
     id = optString("id"),
     name = optString("name", "Profile"),
-    avatar = optString("avatar", null),
+    avatar = stringOrNull("avatar"),
     kids = optBoolean("kids", false),
     hasPin = optBoolean("hasPin", false),
 )
@@ -474,8 +482,8 @@ data class PersonDetail(
 fun JSONObject.toCalendarEpisode(): CalendarEpisode = CalendarEpisode(
     season = if (has("season") && !isNull("season")) optInt("season") else null,
     episode = if (has("episode") && !isNull("episode")) optInt("episode") else null,
-    airDate = optString("airDate", null),
-    name = optString("name", null),
+    airDate = stringOrNull("airDate"),
+    name = stringOrNull("name"),
     dayIndex = optInt("dayIndex", 0),
     aired = optBoolean("aired", false),
 )
@@ -483,10 +491,10 @@ fun JSONObject.toCalendarEpisode(): CalendarEpisode = CalendarEpisode(
 fun JSONObject.toCalendarEntry(): CalendarEntry = CalendarEntry(
     tmdbId = optInt("tmdbId"),
     title = optString("title", "Untitled"),
-    poster = optString("poster", null),
-    year = optString("year", null),
+    poster = stringOrNull("poster"),
+    year = stringOrNull("year"),
     rating = doubleOrNull("rating"),
-    status = optString("status", null),
+    status = stringOrNull("status"),
     episode = optJSONObject("episode")?.toCalendarEpisode(),
 )
 
@@ -525,8 +533,8 @@ fun JSONObject.toCollection(): TitleCollection {
     return TitleCollection(
         id = optInt("id"),
         name = optString("name", ""),
-        overview = optString("overview", null),
-        poster = optString("poster", null),
+        overview = stringOrNull("overview"),
+        poster = stringOrNull("poster"),
         parts = List(values.length()) { index ->
             values.optJSONObject(index)?.toMediaCard() ?: MediaCard("movie", 0, "Untitled")
         },
@@ -541,10 +549,10 @@ fun JSONObject.toPersonDetail(): PersonDetail {
         personId = optInt("personId"),
         name = optString("name", "Unknown"),
         biography = optString("biography", ""),
-        photo = optString("profile", null),
-        knownFor = optString("knownFor", null),
-        birthday = optString("birthday", null),
-        placeOfBirth = optString("placeOfBirth", null),
+        photo = stringOrNull("profile"),
+        knownFor = stringOrNull("knownFor"),
+        birthday = stringOrNull("birthday"),
+        placeOfBirth = stringOrNull("placeOfBirth"),
         movies = List(movieValues.length()) { index ->
             movieValues.optJSONObject(index)?.toMediaCard() ?: MediaCard("movie", 0, "Untitled")
         },
