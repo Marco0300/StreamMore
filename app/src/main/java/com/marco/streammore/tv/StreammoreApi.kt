@@ -267,24 +267,10 @@ class StreammoreApi(
     }
 
     suspend fun myList(profileId: String): List<MediaCard> = withContext(Dispatchers.IO) {
-            val body = get("/api/list?profileId=${enc(profileId)}")
-            val values = body.optJSONArray("items") ?: JSONArray()
-            List(values.length()) { values.getJSONObject(it).toMediaCard() }
-        }
-
-        /**
-         * "Play Something": one pick for this profile. A 404 is the backend saying the
-         * library has nothing playable yet, so it maps to null instead of a failure.
-         */
-        suspend fun random(profileId: String): MediaCard? = withContext(Dispatchers.IO) {
-            val body = try {
-                get("/api/random?profileId=${enc(profileId)}")
-            } catch (nothingToPlay: ApiException) {
-                if (nothingToPlay.status == 404) return@withContext null
-                throw nothingToPlay
-            }
-            body.optJSONObject("item")?.toMediaCard()
-        }
+        val body = get("/api/list?profileId=${enc(profileId)}")
+        val values = body.optJSONArray("items") ?: JSONArray()
+        List(values.length()) { values.getJSONObject(it).toMediaCard() }
+    }
 
     suspend fun toggleList(profileId: String, card: MediaCard): Boolean = withContext(Dispatchers.IO) {
         val body = post("/api/list", JSONObject().apply {

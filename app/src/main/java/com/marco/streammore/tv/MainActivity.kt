@@ -384,9 +384,6 @@ private data class SideNavDestination(
     val active: Boolean,
 )
 
-/** Sidebar entry that runs an action instead of navigating. */
-private const val PlaySomethingKey = "play-something"
-
 private val LocalSideNavReturnFocusRequester = staticCompositionLocalOf<androidx.compose.runtime.State<FocusRequester>?> { null }
 
 private fun routeStateKey(screen: TvScreen): String = when (screen) {
@@ -629,6 +626,16 @@ internal fun StreammoreTvApp() {
                         .onFailure { error = it.message ?: "Could not update favourites" }
                 }
             }
+            fun openPerson(card: Person) = scope.launch {
+                val id = profileId ?: return@launch
+                error = null; person = null; personLoading = true
+                personReturn = screen
+                screen = TvScreen.Person(card.id)
+                runCatching { api.person(card.id, id) }
+                    .onSuccess { person = it }
+                    .onFailure { error = it.message ?: "Could not load this person" }
+                personLoading = false
+            }
             fun play(
         mediaType: String,
         tmdbId: Int,
@@ -704,50 +711,6 @@ internal fun StreammoreTvApp() {
         }
         loading = false
     }
-
-            /** "Play Something": mirror the web button — one pick, then start it. */
-            fun playSomething() = scope.launch {
-                val id = profileId ?: return@launch
-                error = null
-                val result = runCatching { api.random(id) }
-                val pick = result.getOrNull()
-                when {
-                    result.isFailure -> error = result.exceptionOrNull()?.message ?: "Could not pick something"
-                    pick == null -> error = "Nothing to play yet — watch something first"
-                    pick.mediaType == "movie" -> play(
-                        "movie",
-                        pick.tmdbId,
-                        pick.title,
-                        initialPositionMs = playPickPositionMs(pick),
-                        poster = pick.poster,
-                        backdrop = pick.backdrop,
-                        year = pick.year,
-                    )
-                    pick.season != null && pick.episode != null -> play(
-                        "tv",
-                        pick.tmdbId,
-                        pick.title,
-                        pick.season,
-                        pick.episode,
-                        initialPositionMs = playPickPositionMs(pick),
-                        poster = pick.poster,
-                        backdrop = pick.backdrop,
-                        year = pick.year,
-                    )
-                    // No episode to resume: the title page is one press from playing.
-                    else -> openDetail(pick)
-                }
-            }
-            fun openPerson(card: Person) = scope.launch {
-                val id = profileId ?: return@launch
-                error = null; person = null; personLoading = true
-                personReturn = screen
-                screen = TvScreen.Person(card.id)
-                runCatching { api.person(card.id, id) }
-                    .onSuccess { person = it }
-                    .onFailure { error = it.message ?: "Could not load this person" }
-                personLoading = false
-            }
     fun playTrailer(mediaType: String, tmdbId: Int, title: String) = scope.launch {
         error = null
         playerReturn = screen
@@ -958,7 +921,7 @@ internal fun StreammoreTvApp() {
                             }
                         }
                     }
-                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    TvScreen.Home -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         HomeScreen(
                             rows = rows,
                             billboard = billboard,
@@ -976,7 +939,7 @@ internal fun StreammoreTvApp() {
                             },
                         )
                     }
-                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    is TvScreen.Browse -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         BrowseScreen(
                             title = if (current.mediaType == "tv") "TV Shows" else "Movies",
                             cards = cards,
@@ -992,27 +955,27 @@ internal fun StreammoreTvApp() {
                             onLongCard = { contextCard = it },
                         )
                     }
-                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    TvScreen.Search -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         SearchScreen(
                             onCard = ::openDetail,
                             onLongCard = { contextCard = it },
                             onSearch = { query -> profileId?.let { id -> api.search(query, id) } ?: emptyList() },
                         )
                     }
-                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
-                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
+                    TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
+                    TvScreen.MyList -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { GridScreen("My List", cards, ::openDetail, { contextCard = it }) }
 
-                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    TvScreen.Live -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         LiveScreen(
                             liveChannels, error, ::playLive, ::loadLive,
                             favouriteIds = liveFavouriteIds,
                             onToggleFavourite = ::toggleLiveFavourite,
                         )
                     }
-                    TvScreen.Upcoming -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    TvScreen.Upcoming -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         UpcomingScreen(upcoming, error, ::openCalendarEntry)
                     }
-                    is TvScreen.Person -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled, onPlaySomething = ::playSomething) {
+                    is TvScreen.Person -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
                         when {
                             personLoading && person == null -> LoadingScreen(error)
                             person == null -> LoadingScreen(error ?: "Could not load this person")
@@ -1250,7 +1213,6 @@ internal fun AppShell(
     navigate: (TvScreen) -> Unit,
     profile: Profile?,
     showLiveTv: Boolean = true,
-    onPlaySomething: () -> Unit = {},
     content: @Composable () -> Unit,
 ) {
     var profileMenuOpen by remember { mutableStateOf(false) }
@@ -1264,9 +1226,7 @@ internal fun AppShell(
         SideNavDestination("movies", "Movies", R.drawable.ic_nav_movies, TvScreen.Browse("movie"), screen is TvScreen.Browse && screen.mediaType == "movie"),
         SideNavDestination("live-tv", "Live TV", R.drawable.ic_nav_live_tv, TvScreen.Live, screen is TvScreen.Live),
         SideNavDestination("my-list", "My List", R.drawable.ic_nav_my_list, TvScreen.MyList, screen is TvScreen.MyList),
-                // An action, not a destination: it asks the backend for one pick and starts it.
-                SideNavDestination(PlaySomethingKey, "Play Something", R.drawable.ic_play_something, TvScreen.Home, false),
-            )
+    )
     val destinations = allDestinations.filter { showLiveTv || it.key != "live-tv" }
     val navFocusRequesters = remember { allDestinations.associate { it.key to FocusRequester() } }
     var lastFocusedNavKey by rememberSaveable {
@@ -1328,10 +1288,9 @@ internal fun AppShell(
                             },
                             onFocusPosition = { focusedNavCenterY = it },
                             onClick = {
-                                                            lastFocusedNavKey = destination.key
-                                                            if (destination.key == PlaySomethingKey) onPlaySomething()
-                                                            else navigate(destination.route)
-                                                        },
+                                lastFocusedNavKey = destination.key
+                                navigate(destination.route)
+                            },
                         )
                     }
                 }
