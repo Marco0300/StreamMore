@@ -239,6 +239,28 @@ class StreammoreApi(
         })
     }
 
+    /**
+     * The backend has no "watched" flag, so a movie is marked by writing a finished
+     * position. The write also registers a live "watching" entry, which is cleared
+     * straight away so the admin view does not show a phantom viewer.
+     */
+    suspend fun markWatched(profileId: String, card: MediaCard) {
+        val playbackId = "mark-${System.currentTimeMillis()}-${card.tmdbId}"
+        saveProgress(
+            profileId = profileId,
+            mediaType = card.mediaType,
+            tmdbId = card.tmdbId,
+            title = card.title,
+            position = MARKED_WATCHED_MS,
+            duration = MARKED_WATCHED_MS,
+            poster = card.poster,
+            backdrop = card.backdrop,
+            year = card.year,
+            playbackId = playbackId,
+        )
+        runCatching { clearWatching(profileId, playbackId) }
+    }
+
     suspend fun removeProgress(profileId: String, mediaType: String, tmdbId: Int): Boolean = withContext(Dispatchers.IO) {
         val params = "profileId=${enc(profileId)}&mediaType=${enc(mediaType)}&tmdbId=$tmdbId"
         delete("/api/progress?$params").optBoolean("ok", false)
@@ -503,6 +525,8 @@ class StreammoreApi(
 
     private companion object {
         const val TAG = "StreammoreApi"
+        /** Two hours: any positive duration reads as 100% watched. */
+        const val MARKED_WATCHED_MS = 7_200_000L
     }
 
     private fun enc(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())

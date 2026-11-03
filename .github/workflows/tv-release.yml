@@ -128,9 +128,9 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Fixes posters and text fields showing "null" when the server sends no value.
-            - Sends the sign-in cookie only to the Streammore server, not to stream hosts.
-            - Update installer clears old downloads and warns when the TV is too full to install.
+            - Remembers each profile's audio and subtitle language for the next title.
+            - Adds "Mark as watched" and "Mark as unwatched" for movies in the long-press menu.
+            - Adds an App updates screen (profile menu) showing version, free storage and a manual update check.
 
             SHA-256: `${{ env.SHA256 }}`
 

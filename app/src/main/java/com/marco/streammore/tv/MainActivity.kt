@@ -213,6 +213,7 @@ internal data class AvailableAudioTrack(
     val group: TrackGroup,
     val trackIndex: Int,
     val isSelected: Boolean,
+    val language: String? = null,
 )
 
 /** Builds a useful audio label even when a container omits a human-readable label. */
@@ -269,6 +270,7 @@ internal fun availableAudioTracks(tracks: Tracks): List<AvailableAudioTrack> {
                         group = group.mediaTrackGroup,
                         trackIndex = index,
                         isSelected = group.isTrackSelected(index),
+                        language = format.language,
                     )
                 }
         }
@@ -349,6 +351,7 @@ internal sealed interface TvScreen {
         data object MyList : TvScreen
 
     data object Live : TvScreen
+    data object Updates : TvScreen
     data class Detail(val mediaType: String, val tmdbId: Int) : TvScreen
     data class Person(val personId: Int) : TvScreen
     data class Player(
@@ -398,6 +401,7 @@ private fun routeStateKey(screen: TvScreen): String = when (screen) {
         TvScreen.MyList -> "my-list"
 
     TvScreen.Live -> "live"
+    TvScreen.Updates -> "updates"
     is TvScreen.Detail -> "detail:${screen.mediaType}:${screen.tmdbId}"
     is TvScreen.Person -> "person:${screen.personId}"
     is TvScreen.Player -> "player"
@@ -415,6 +419,7 @@ internal fun StreammoreTvApp() {
     val context = LocalContext.current
     val api = remember(context) { StreammoreApi(context.applicationContext) }
     val scope = rememberCoroutineScope()
+    val playbackPrefs = remember(context) { PlaybackPrefsStore(context.applicationContext) }
     var screen by remember { mutableStateOf<TvScreen>(TvScreen.Login) }
     var profiles by remember { mutableStateOf<List<Profile>>(emptyList()) }
     var pendingProfile by remember { mutableStateOf<Profile?>(null) }
@@ -452,6 +457,8 @@ internal fun StreammoreTvApp() {
     var updateDismissed by remember { mutableStateOf(false) }
     var updateBusy by remember { mutableStateOf(false) }
     var updateError by remember { mutableStateOf<String?>(null) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateCheckMessage by remember { mutableStateOf<String?>(null) }
     // The screen that opened the player. Back from playback returns there instead
     // of always dumping the user back onto Home.
     var playerReturn by remember { mutableStateOf<TvScreen?>(null) }
@@ -805,9 +812,54 @@ internal fun StreammoreTvApp() {
                 rows = rows.map { row ->
                     if (row.id == "continue") row.copy(items = row.items.filterNot { cardKey(it) == cardKey(card) }) else row
                 }.filter { it.items.isNotEmpty() }
+                detail = detail?.takeIf { it.mediaType == card.mediaType && it.tmdbId == card.tmdbId }
+                    ?.copy(progress = 0.0, resumePositionMs = null, resumeSeason = null, resumeEpisode = null, resumeNext = false)
+                    ?: detail
                 contextCard = null
             }
             .onFailure { error = it.message ?: "Could not remove viewing progress" }
+    }
+    fun markCardWatched(card: MediaCard) = scope.launch {
+        val id = profileId ?: return@launch
+        runCatching { api.markWatched(id, card) }
+            .onSuccess {
+                // A finished title leaves Continue Watching, same as one watched to the end.
+                rows = rows.map { row ->
+                    if (row.id == "continue") row.copy(items = row.items.filterNot { cardKey(it) == cardKey(card) }) else row
+                }.filter { it.items.isNotEmpty() }
+                detail = detail?.takeIf { it.mediaType == card.mediaType && it.tmdbId == card.tmdbId }
+                    ?.copy(progress = 1.0, resumePositionMs = null)
+                    ?: detail
+                contextCard = null
+            }
+            .onFailure { error = it.message ?: "Could not mark as watched" }
+    }
+
+    fun startUpdate() {
+        val update = availableUpdate ?: return
+        if (updateBusy) return
+        scope.launch {
+            updateBusy = true
+            updateError = null
+            runCatching { downloadAndInstallUpdate(context, update) }
+                .onFailure { updateError = it.message ?: "Could not start the update" }
+            updateBusy = false
+        }
+    }
+    fun checkForUpdateNow() {
+        if (updateChecking) return
+        scope.launch {
+            updateChecking = true
+            updateCheckMessage = null
+            runCatching { checkForAppUpdate() }
+                .onSuccess {
+                    availableUpdate = it
+                    updateDismissed = false
+                    updateCheckMessage = if (it == null) "You're on the latest version" else null
+                }
+                .onFailure { updateCheckMessage = it.message ?: "Could not check for updates" }
+            updateChecking = false
+        }
     }
 
     fun updatePlaybackUi(current: TvScreen.Player, position: Long, duration: Long) {
@@ -960,6 +1012,18 @@ internal fun StreammoreTvApp() {
                             onCard = ::openDetail,
                             onLongCard = { contextCard = it },
                             onSearch = { query -> profileId?.let { id -> api.search(query, id) } ?: emptyList() },
+                        )
+                    }
+                    TvScreen.Updates -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
+                        UpdatesScreen(
+                            currentVersion = BuildConfig.VERSION_NAME,
+                            available = availableUpdate,
+                            checking = updateChecking,
+                            checkMessage = updateCheckMessage,
+                            busy = updateBusy,
+                            error = updateError,
+                            onCheck = ::checkForUpdateNow,
+                            onInstall = ::startUpdate,
                         )
                     }
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
@@ -1160,6 +1224,10 @@ internal fun StreammoreTvApp() {
                         // player returns to this detail page when it ends. Trailers and
                         // Live TV carry no media type and keep the player.
                         autoExitWhenFinished = shouldExitWhenFinished(current.mediaType, current.nextEpisode != null),
+                        preferredAudioLanguage = profileId?.let { playbackPrefs.get(it).audioLanguage },
+                        preferredSubtitleLanguage = profileId?.let { playbackPrefs.get(it).subtitleLanguage },
+                        onAudioLanguageChosen = { language -> profileId?.let { playbackPrefs.setAudioLanguage(it, language) } },
+                        onSubtitleChosen = { language -> profileId?.let { playbackPrefs.setSubtitleLanguage(it, language) } },
                     )
                 }
                 }
@@ -1174,17 +1242,7 @@ internal fun StreammoreTvApp() {
                         busy = updateBusy,
                         error = updateError,
                         onLater = { updateDismissed = true },
-                        onUpdate = {
-                            if (!updateBusy) {
-                                scope.launch {
-                                    updateBusy = true
-                                    updateError = null
-                                    runCatching { downloadAndInstallUpdate(context, availableUpdate!!) }
-                                        .onFailure { updateError = it.message ?: "Could not start the update" }
-                                    updateBusy = false
-                                }
-                            }
-                        },
+                        onUpdate = ::startUpdate,
                     )
                 }
                 if (contextCard != null && (availableUpdate == null || updateDismissed)) {
@@ -1197,6 +1255,7 @@ internal fun StreammoreTvApp() {
                         onDismiss = { contextCard = null },
                         onToggleList = { toggleCardList(selected) },
                         onRemoveProgress = { removeCardProgress(selected) },
+                        onMarkWatched = { markCardWatched(selected) },
                     )
                 }
 
@@ -1351,31 +1410,39 @@ internal fun AppShell(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text("PROFILE", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                     Text(profile?.name ?: "Profile", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                    var switchFocused by remember { mutableStateOf(false) }
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .focusRequester(switchProfileFocus)
-                            .onFocusChanged { switchFocused = it.isFocused || it.hasFocus }
-                            .focusable()
-                            .clickable {
-                                profileMenuOpen = false
-                                navigate(TvScreen.Profiles)
-                            }
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(if (switchFocused) Purple else PanelFocused)
-                            .border(
-                                width = if (switchFocused) 2.dp else 1.dp,
-                                color = if (switchFocused) BorderFocused else Purple,
-                                shape = RoundedCornerShape(8.dp),
-                            )
-                            .padding(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
-                        Text("Switch profile", color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    ProfileMenuItem("Switch profile", Modifier.focusRequester(switchProfileFocus)) {
+                        profileMenuOpen = false
+                        navigate(TvScreen.Profiles)
+                    }
+                    ProfileMenuItem("App updates", Modifier) {
+                        profileMenuOpen = false
+                        navigate(TvScreen.Updates)
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileMenuItem(label: String, modifier: Modifier, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Box(
+        modifier
+            .fillMaxWidth()
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .focusable()
+            .clickable(onClick = onClick)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) Purple else PanelFocused)
+            .border(
+                width = if (focused) 2.dp else 1.dp,
+                color = if (focused) BorderFocused else Purple,
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+    ) {
+        Text(label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -3181,7 +3248,9 @@ private fun CardActionMenu(
     onDismiss: () -> Unit,
     onToggleList: () -> Unit,
     onRemoveProgress: () -> Unit,
+    onMarkWatched: () -> Unit = {},
 ) {
+    val isMovie = card.mediaType.equals("movie", ignoreCase = true)
     val firstFocus = remember(card.mediaType, card.tmdbId) { FocusRequester() }
     LaunchedEffect(card.mediaType, card.tmdbId) {
         delay(80)
@@ -3205,13 +3274,95 @@ private fun CardActionMenu(
             ) {
                 Text(if (inMyList) "Remove from My List" else "Add to My List", fontSize = 14.sp)
             }
-            if (canRemoveProgress) {
+            if (isMovie) {
+                TvButton(onClick = onMarkWatched, modifier = Modifier.fillMaxWidth()) {
+                    Text("Mark as watched", color = TextPrimary, fontSize = 14.sp)
+                }
                 TvButton(onClick = onRemoveProgress, modifier = Modifier.fillMaxWidth()) {
-                    Text("Remove from Continue Watching", color = TextPrimary, fontSize = 14.sp)
+                    Text("Mark as unwatched", color = TextPrimary, fontSize = 14.sp)
+                }
+            } else if (canRemoveProgress) {
+                TvButton(onClick = onRemoveProgress, modifier = Modifier.fillMaxWidth()) {
+                    Text("Reset progress (mark as unwatched)", color = TextPrimary, fontSize = 14.sp)
                 }
             }
             TvButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                 Text("Cancel", color = TextPrimary, fontSize = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
+internal fun UpdatesScreen(
+    currentVersion: String,
+    available: AppUpdate?,
+    checking: Boolean,
+    checkMessage: String?,
+    busy: Boolean,
+    error: String?,
+    onCheck: () -> Unit,
+    onInstall: () -> Unit,
+) {
+    val context = LocalContext.current
+    val storage = remember(busy, checking, available) {
+        runCatching { android.os.StatFs(context.cacheDir.path) }.getOrNull()?.let { it.availableBytes to it.totalBytes }
+    }
+    val low = storage?.let { isStorageLow(it.first, it.second) } == true
+    val primaryFocus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(120)
+        runCatching { primaryFocus.requestFocus() }
+    }
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = Gutter, vertical = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Text("App updates", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Installed version $currentVersion", color = Muted, fontSize = 15.sp)
+        if (storage != null) {
+            Text(
+                "Storage: ${formatStorageSize(storage.first)} free of ${formatStorageSize(storage.second)}",
+                color = if (low) ErrorText else Muted,
+                fontSize = 15.sp,
+            )
+            if (low) {
+                Text(
+                    "Storage is nearly full, so Android may refuse to install an update. " +
+                        "Uninstall an unused app or clear its data first.",
+                    color = ErrorText,
+                    fontSize = 13.sp,
+                    modifier = Modifier.widthIn(max = 620.dp),
+                )
+            }
+        }
+        when {
+            available != null -> {
+                Text("Version ${available.versionName} is available", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                if (available.releaseNotes.isNotBlank()) {
+                    Text(available.releaseNotes.take(600), color = Muted, fontSize = 14.sp, maxLines = 8, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
+                }
+            }
+            checkMessage != null -> Text(checkMessage, color = Muted, fontSize = 15.sp)
+        }
+        if (error != null) Text(error, color = ErrorText, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
+        if (busy || checking) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                CircularProgressIndicator(Modifier.size(22.dp), color = Purple, strokeWidth = 2.dp)
+                Text(if (busy) "Downloading update…" else "Checking for updates…", color = Muted, fontSize = 14.sp)
+            }
+        } else {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (available != null) {
+                    TvButton(onClick = onInstall, primary = true, modifier = Modifier.focusRequester(primaryFocus)) {
+                        Text("Install ${available.versionName}", fontSize = 14.sp)
+                    }
+                    TvButton(onClick = onCheck) { Text("Check again", color = TextPrimary, fontSize = 14.sp) }
+                } else {
+                    TvButton(onClick = onCheck, primary = true, modifier = Modifier.focusRequester(primaryFocus)) {
+                        Text("Check for updates", fontSize = 14.sp)
+                    }
+                }
             }
         }
     }
@@ -3324,6 +3475,11 @@ internal fun PlayerScreen(
      * leaving them on a finished frame.
      */
     autoExitWhenFinished: Boolean = false,
+    /** What this profile picked last time; applied before the viewer touches a menu. */
+    preferredAudioLanguage: String? = null,
+    preferredSubtitleLanguage: String? = null,
+    onAudioLanguageChosen: (String) -> Unit = {},
+    onSubtitleChosen: (String?) -> Unit = {},
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -3344,7 +3500,8 @@ internal fun PlayerScreen(
     var episodeMenuOpen by remember(source) { mutableStateOf(false) }
     var settingsMenuOpen by remember(source) { mutableStateOf(false) }
     var autoNextEnabled by remember(source) { mutableStateOf(true) }
-    var selectedSubtitle by remember(source) { mutableStateOf<String?>(null) }
+    val restoredSubtitle = remember(source) { resolveSubtitlePreference(preferredSubtitleLanguage, subtitles) }
+    var selectedSubtitle by remember(source) { mutableStateOf(restoredSubtitle) }
     var selectedQualityLabel by remember(source) { mutableStateOf("Auto") }
     var availableQualities by remember(source) { mutableStateOf<List<AvailableVideoQuality>>(emptyList()) }
     var audioTracks by remember(source) { mutableStateOf<List<AvailableAudioTrack>>(emptyList()) }
@@ -3394,7 +3551,8 @@ internal fun PlayerScreen(
             // English automatically while leaving the other tracks available to
             // Media3's track selector.
             parameters = buildUponParameters()
-                .setPreferredAudioLanguage("en")
+                .setPreferredAudioLanguage(normalizedLanguage(preferredAudioLanguage) ?: "en")
+                .apply { restoredSubtitle?.let { setPreferredTextLanguage(it) } }
                 .build()
         }
     }
@@ -3569,6 +3727,7 @@ internal fun PlayerScreen(
         if (track != null) {
             parameters.addOverride(TrackSelectionOverride(track.group, listOf(track.trackIndex)))
             selectedAudioTrackKey = track.key
+            normalizedLanguage(track.language)?.let(onAudioLanguageChosen)
         } else {
             selectedAudioTrackKey = null
         }
@@ -3583,6 +3742,7 @@ internal fun PlayerScreen(
             .build()
         trackSelector.parameters = parameters
         selectedSubtitle = language
+        onSubtitleChosen(language)
         subtitleMenuOpen = false
     }
 

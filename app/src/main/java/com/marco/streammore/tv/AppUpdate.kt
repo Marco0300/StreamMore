@@ -84,6 +84,17 @@ internal fun selectLatestTvRelease(releases: List<TvReleaseCandidate>): TvReleas
 internal fun requiredFreeBytes(apkBytes: Long, totalBytes: Long): Long =
     apkBytes + minOf(totalBytes / 10, 500L * 1024 * 1024)
 
+/** A typical release APK, used to judge whether the TV has room before one is known. */
+internal const val TYPICAL_APK_BYTES = 15L * 1024 * 1024
+
+internal fun isStorageLow(freeBytes: Long, totalBytes: Long): Boolean =
+    freeBytes < requiredFreeBytes(TYPICAL_APK_BYTES, totalBytes)
+
+internal fun formatStorageSize(bytes: Long): String {
+    val mb = bytes.coerceAtLeast(0L) / (1024.0 * 1024.0)
+    return if (mb >= 1024) "%.1f GB".format(mb / 1024.0) else "%d MB".format(mb.toLong())
+}
+
 internal fun insufficientStorageMessage(requiredBytes: Long, freeBytes: Long): String {
     val missingMb = ((requiredBytes - freeBytes) / (1024 * 1024)).coerceAtLeast(1)
     return "Not enough storage to install the update. Free up about $missingMb MB " +
