@@ -109,6 +109,20 @@ class NewEndpointsApiTest {
                     "tv":[{"mediaType":"tv","tmdbId":1396,"title":"Breaking Bad","year":"2008","rating":9.5}]}}
     """.trimIndent()
 
+    private val profilesPayload = """
+        {"profiles":[
+           {"id":"p1","name":"Marco","avatar":"fox","kids":false,"hasPin":false,"prefs":{"source":"auto"}},
+           {"id":"p2","name":"Kids","avatar":"kid","kids":true,"hasPin":true,"prefs":{"source":"cinepro"}}
+         ],
+         "sources":[
+           {"key":"auto","label":"Automatic","off":false},
+           {"key":"flyx","label":"Flyx add-on","off":false},
+           {"key":"cinepro","label":"CinePro","off":false},
+           {"key":"xtream","label":"Xtream panel","off":true},
+           {"key":"streamline","label":"Streamline","off":false}
+         ]}
+    """.trimIndent()
+
     private val detailWithCollection = """
         {"mediaType":"movie","tmdbId":693134,"title":"Dune: Part Two","overview":"Paul Atreides.",
          "collection":{"id":726871,"name":"Dune Collection","overview":"The saga.","poster":null,
@@ -193,5 +207,38 @@ class NewEndpointsApiTest {
         mapOf("GET /api/title/movie/1?profileId=p1" to (200 to """{"mediaType":"movie","tmdbId":1,"title":"Solo","overview":""}""")),
     ) { api, _ ->
         assertEquals(null, api.detail("movie", 1, "p1").collection)
+    }
+
+    @Test
+    fun profilesCarryTheirOwnSourceChoiceAndTheServersSourceOptions() = withServer(
+        mapOf("GET /api/profiles" to (200 to profilesPayload)),
+    ) { api, captured ->
+        val payload = api.profilesPayload()
+
+        assertEquals(listOf("GET /api/profiles"), captured.map { it.line })
+        assertEquals(listOf("p1", "p2"), payload.profiles.map { it.id })
+        assertEquals("auto", payload.profiles[0].preferredSource)
+        assertEquals("cinepro", payload.profiles[1].preferredSource)
+        assertEquals(
+            listOf("auto", "flyx", "cinepro", "xtream", "streamline"),
+            payload.sources.map { it.key },
+        )
+        assertEquals("CinePro", payload.sources[2].label)
+        assertTrue("the deployment switched xtream off", payload.sources[3].off)
+    }
+
+    @Test
+    fun savingAPreferredSourcePatchesTheProfileAndReadsTheValueBack() = withServer(
+        mapOf(
+            "PATCH /api/profiles/p2" to (
+                200 to """{"id":"p2","name":"Kids","kids":true,"hasPin":true,"prefs":{"source":"cinepro"}}"""
+                ),
+        ),
+    ) { api, captured ->
+        val saved = api.updatePreferredSource("p2", "cinepro")
+
+        assertEquals("cinepro", saved)
+        assertEquals(listOf("PATCH /api/profiles/p2"), captured.map { it.line })
+        assertEquals("""{"prefs":{"source":"cinepro"}}""", captured.single().body)
     }
 }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.marco.streammore.tv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 65
-        versionName = "1.18.20"
+        versionCode = 66
+                versionName = "1.18.21"
     }
 
     val releaseKeystore = System.getenv("STREAMMORE_RELEASE_KEYSTORE")
@@ -97,6 +97,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Already present through Coil; named here because StreammoreApi calls OkHttp
+    // directly for PATCH, which java.net.HttpURLConnection cannot send.
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     implementation("androidx.media3:media3-exoplayer:1.5.1")
     implementation("androidx.media3:media3-exoplayer-hls:1.5.1")

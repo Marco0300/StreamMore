@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -320,5 +321,60 @@ class NewScreensTest {
         compose.onNodeWithTag("detail-content").performScrollToNode(hasTestTag("cast-card-501"))
         compose.onNodeWithTag("cast-card-501").performClick()
         compose.runOnIdle { assertEquals(501, opened?.id) }
+    }
+
+    // ── (e) Preferred source ────────────────────────────────────────────────
+
+    private val sourceOptions = listOf(
+        SourceOption("auto", "Automatic"),
+        SourceOption("flyx", "Flyx add-on"),
+        SourceOption("cinepro", "CinePro"),
+        SourceOption("xtream", "Xtream panel", off = true),
+    )
+
+    @Test
+    fun preferredSourceListsEveryOptionMarksTheChoiceAndSavesANewOne() {
+        var chosen: String? = null
+        compose.setContent {
+            Frame {
+                UpdatesScreen(
+                    currentVersion = "1.18.20",
+                    available = null,
+                    checking = false,
+                    checkMessage = null,
+                    busy = false,
+                    error = null,
+                    onCheck = { },
+                    onInstall = { },
+                    profileName = "Kids",
+                    preferredSource = "auto",
+                    sourceOptions = sourceOptions,
+                    onSelectSource = { chosen = it },
+                )
+            }
+        }
+        compose.waitForIdle()
+
+        compose.onNodeWithText("Preferred source for Kids").assertExists()
+        compose.onNodeWithTag("updates-content").performScrollToNode(hasTestTag("preferred-source-xtream"))
+
+        sourceOptions.forEach { option ->
+            compose.onNodeWithTag("preferred-source-${option.key}").assertExists()
+        }
+        // Exactly one row is marked, and it is the profile's current backend.
+        compose.onNodeWithTag("preferred-source-auto").assertTextContains("Automatic")
+        compose.onNodeWithTag("preferred-source-auto").assertTextContains("Current")
+        assertEquals(
+            "only the current backend may be marked",
+            1,
+            compose.onAllNodesWithText("Current").fetchSemanticsNodes().size,
+        )
+
+        // The server has this backend switched off, so the row refuses the click.
+        compose.onNodeWithTag("preferred-source-xtream").performClick()
+        compose.runOnIdle { assertEquals(null, chosen) }
+
+        compose.onNodeWithTag("preferred-source-cinepro").performClick()
+        compose.runOnIdle { assertEquals("cinepro", chosen) }
     }
 }

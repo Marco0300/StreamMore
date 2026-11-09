@@ -6,13 +6,15 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.TimeUnit
 
 class ApiException(val status: Int, message: String) : Exception(message)
 
@@ -22,6 +24,14 @@ class StreammoreApi(
 ) {
     private val sessionPrefs = context.applicationContext.getSharedPreferences("streammore_session", Context.MODE_PRIVATE)
     private var cookie: String? = sessionPrefs.getString("cookie", null)
+
+    // OkHttp, not HttpURLConnection: saving a profile's preferred source needs PATCH,
+    // which java.net.HttpURLConnection refuses outright ("Invalid HTTP method").
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false)
+        .build()
 
     /** The stored session cookie, so ExoPlayer can authenticate media requests. */
     fun sessionCookie(): String? = cookie
@@ -53,10 +63,11 @@ class StreammoreApi(
         post("/api/auth/device/cancel", JSONObject().put("deviceCode", deviceCode))
     }
 
-    suspend fun profiles(): List<Profile> = withContext(Dispatchers.IO) {
-        val body = get("/api/profiles")
-        val values = body.optJSONArray("profiles") ?: JSONArray()
-        List(values.length()) { values.getJSONObject(it).toProfile() }
+    suspend fun profiles(): List<Profile> = profilesPayload().profiles
+
+    /** The profile list plus the streaming backends this deployment advertises. */
+    suspend fun profilesPayload(): ProfilesPayload = withContext(Dispatchers.IO) {
+        get("/api/profiles").toProfilesPayload()
     }
 
     suspend fun home(profileId: String): HomeData = withContext(Dispatchers.IO) {
@@ -324,6 +335,17 @@ class StreammoreApi(
         true
     }
 
+    /**
+     * Save this profile's preferred streaming backend. The server answers with the
+     * whole updated profile, so the value is read back from the response: it
+     * normalises an unknown key to "auto" rather than rejecting the request.
+     */
+    suspend fun updatePreferredSource(profileId: String, source: String): String = withContext(Dispatchers.IO) {
+        patch("/api/profiles/${enc(profileId)}", JSONObject().apply {
+            put("prefs", JSONObject().apply { put("source", source) })
+        }).toPreferredSource()
+    }
+
     suspend fun subtitles(mediaType: String, tmdbId: Int, season: Int? = null, episode: Int? = null): List<SubtitleTrack> = withContext(Dispatchers.IO) {
         val params = buildString {
             append("mediaType=${enc(mediaType)}&tmdbId=$tmdbId")
@@ -467,50 +489,39 @@ class StreammoreApi(
 
     private suspend fun post(path: String, body: JSONObject): JSONObject = request("POST", path, body)
 
+    private suspend fun patch(path: String, body: JSONObject): JSONObject = request("PATCH", path, body)
+
     private suspend fun delete(path: String): JSONObject = request("DELETE", path, null)
 
     private suspend fun request(method: String, path: String, body: JSONObject?): JSONObject = withContext(Dispatchers.IO) {
         val endpoint = baseUrl.trimEnd('/') + path
         val url = URL(endpoint)
-        val connection = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = 60_000
-            instanceFollowRedirects = true
-            doInput = true
-            useCaches = false
-            setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Streammore-TV/${BuildConfig.VERSION_NAME}")
-            cookie?.let { setRequestProperty("Cookie", it) }
-            if (body != null) {
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json")
-            }
-        }
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/json")
+            .header("User-Agent", "Streammore-TV/${BuildConfig.VERSION_NAME}")
+            .apply { cookie?.let { header("Cookie", it) } }
+            .method(method, body?.toString()?.toRequestBody(JsonMediaType))
+            .build()
         try {
-            body?.toString()?.toByteArray(Charsets.UTF_8)?.let { connection.outputStream.use { out -> out.write(it) } }
-            val status = connection.responseCode
-            Log.d(TAG, "$method $path -> HTTP $status")
-            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val text = stream?.use { input -> BufferedReader(InputStreamReader(input)).readText() } ?: "{}"
-            if (status !in 200..299) {
-                val message = runCatching { JSONObject(text).optString("error", text) }.getOrDefault(text)
-                throw ApiException(status, message)
-            }
-            val result = runCatching { JSONObject(text) }.getOrElse {
-                throw ApiException(status, "Backend returned invalid JSON from $path")
-            }
-            // A late response after Back must not resurrect a cancelled sign-in.
-            currentCoroutineContext().ensureActive()
-            connection.headerFields.entries
-                .firstOrNull { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
-                ?.value
-                ?.firstOrNull()
-                ?.let { setCookie ->
+            client.newCall(request).execute().use { response ->
+                Log.d(TAG, "$method $path -> HTTP ${response.code}")
+                val text = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val message = runCatching { JSONObject(text).optString("error", text) }.getOrDefault(text)
+                    throw ApiException(response.code, message)
+                }
+                val result = runCatching { JSONObject(text) }.getOrElse {
+                    throw ApiException(response.code, "Backend returned invalid JSON from $path")
+                }
+                // A late response after Back must not resurrect a cancelled sign-in.
+                currentCoroutineContext().ensureActive()
+                response.headers("Set-Cookie").firstOrNull()?.let { setCookie ->
                     cookie = setCookie.substringBefore(';')
                     sessionPrefs.edit().putString("cookie", cookie).apply()
                 }
-            result
+                result
+            }
         } catch (cancelled: kotlinx.coroutines.CancellationException) {
             throw cancelled
         } catch (api: ApiException) {
@@ -518,8 +529,6 @@ class StreammoreApi(
         } catch (failure: IOException) {
             Log.e(TAG, "$method $endpoint failed", failure)
             throw ApiException(-1, "Cannot reach Streammore backend at ${baseUrl.trimEnd('/')}: ${failure.message ?: failure.javaClass.simpleName}")
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -527,6 +536,8 @@ class StreammoreApi(
         const val TAG = "StreammoreApi"
         /** Two hours: any positive duration reads as 100% watched. */
         const val MARKED_WATCHED_MS = 7_200_000L
+        /** Every route expects a UTF-8 JSON object as its request body. */
+        val JsonMediaType = "application/json".toMediaType()
     }
 
     private fun enc(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())

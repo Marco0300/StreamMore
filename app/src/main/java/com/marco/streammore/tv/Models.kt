@@ -10,6 +10,22 @@ data class Profile(
     val avatar: String? = null,
     val kids: Boolean = false,
     val hasPin: Boolean = false,
+    /** The backend this profile would rather stream from; "auto" lets the server choose. */
+    val preferredSource: String = "auto",
+)
+
+/** A streaming backend this deployment offers, as `/api/profiles` advertises it. */
+data class SourceOption(
+    val key: String,
+    val label: String,
+    /** The deployment has this backend switched off, so the profile cannot pick it. */
+    val off: Boolean = false,
+)
+
+/** `/api/profiles` answers both the profile list and the source options for the screen. */
+data class ProfilesPayload(
+    val profiles: List<Profile> = emptyList(),
+    val sources: List<SourceOption> = emptyList(),
 )
 
 data class TrailerPlayback(
@@ -412,7 +428,33 @@ fun JSONObject.toProfile(): Profile = Profile(
     avatar = stringOrNull("avatar"),
     kids = optBoolean("kids", false),
     hasPin = optBoolean("hasPin", false),
+    // Older servers omit prefs entirely; the default has always been automatic.
+    preferredSource = toPreferredSource(),
 )
+
+/** The per-profile `prefs.source` value, from a profile object or a PATCH response. */
+fun JSONObject.toPreferredSource(): String =
+    optJSONObject("prefs")?.optString("source")?.takeIf { it.isNotBlank() } ?: "auto"
+
+fun JSONObject.toSourceOptions(): List<SourceOption> {
+    val values = optJSONArray("sources") ?: JSONArray()
+    return List(values.length()) { index ->
+        val item = values.optJSONObject(index) ?: JSONObject()
+        SourceOption(
+            key = item.optString("key"),
+            label = item.optString("label", item.optString("key")),
+            off = item.optBoolean("off", false),
+        )
+    }.filter { it.key.isNotBlank() }
+}
+
+fun JSONObject.toProfilesPayload(): ProfilesPayload {
+    val values = optJSONArray("profiles") ?: JSONArray()
+    return ProfilesPayload(
+        profiles = List(values.length()) { values.getJSONObject(it).toProfile() },
+        sources = toSourceOptions(),
+    )
+}
 
 // ── Upcoming / air dates ─────────────────────────────────────────────────────
 

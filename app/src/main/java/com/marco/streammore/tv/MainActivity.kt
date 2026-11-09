@@ -430,6 +430,9 @@ internal fun StreammoreTvApp() {
     // Older server responses omit the flag, so preserve the historical enabled default.
     var liveTvEnabled by remember { mutableStateOf(true) }
     var autoplayPreviews by remember { mutableStateOf(true) }
+    // The streaming backends this deployment offers, and whether a save is in flight.
+    var sourceOptions by remember { mutableStateOf<List<SourceOption>>(emptyList()) }
+    var sourceSaving by remember { mutableStateOf(false) }
     var cards by remember { mutableStateOf<List<MediaCard>>(emptyList()) }
     var myListKeys by remember { mutableStateOf<Set<String>>(emptySet()) }
     var contextCard by remember { mutableStateOf<MediaCard?>(null) }
@@ -494,9 +497,33 @@ internal fun StreammoreTvApp() {
     fun loadProfiles() = scope.launch {
         error = null
         loading = true
-        runCatching { api.profiles() }.onSuccess { profiles = it; screen = TvScreen.Profiles }
+        runCatching { api.profilesPayload() }
+            .onSuccess { payload ->
+                profiles = payload.profiles
+                sourceOptions = payload.sources
+                screen = TvScreen.Profiles
+            }
             .onFailure { error = it.message ?: "Could not load profiles" }
         loading = false
+    }
+
+    /**
+     * Save the active profile's preferred source. The server normalises the value
+     * and answers with the whole profile, so the response is what lands in state.
+     */
+    fun savePreferredSource(sourceKey: String) {
+        val id = profileId ?: return
+        if (sourceSaving) return
+        scope.launch {
+            error = null
+            sourceSaving = true
+            runCatching { api.updatePreferredSource(id, sourceKey) }
+                .onSuccess { saved ->
+                    profiles = profiles.map { if (it.id == id) it.copy(preferredSource = saved) else it }
+                }
+                .onFailure { error = it.message ?: "Could not save the preferred source" }
+            sourceSaving = false
+        }
     }
     fun loadHome(id: String) = scope.launch {
         error = null
@@ -1015,6 +1042,7 @@ internal fun StreammoreTvApp() {
                         )
                     }
                     TvScreen.Updates -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) {
+                        val activeProfile = profiles.firstOrNull { it.id == profileId }
                         UpdatesScreen(
                             currentVersion = BuildConfig.VERSION_NAME,
                             available = availableUpdate,
@@ -1024,6 +1052,11 @@ internal fun StreammoreTvApp() {
                             error = updateError,
                             onCheck = ::checkForUpdateNow,
                             onInstall = ::startUpdate,
+                            profileName = activeProfile?.name,
+                            preferredSource = activeProfile?.preferredSource ?: "auto",
+                            sourceOptions = sourceOptions,
+                            saving = sourceSaving,
+                            onSelectSource = ::savePreferredSource,
                         )
                     }
                     TvScreen.NewHot -> AppShell(screen, ::navigate, profiles.firstOrNull { it.id == profileId }, showLiveTv = liveTvEnabled) { NewHotScreen(rows, ::openDetail, { contextCard = it }) }
@@ -3303,6 +3336,14 @@ internal fun UpdatesScreen(
     error: String?,
     onCheck: () -> Unit,
     onInstall: () -> Unit,
+    /** Name of the active profile, used in the Preferred source heading. */
+    profileName: String? = null,
+    /** The active profile's prefs.source, or "auto" while the list is still loading. */
+    preferredSource: String = "auto",
+    /** The streaming backends this deployment offers, as the server described them. */
+    sourceOptions: List<SourceOption> = emptyList(),
+    saving: Boolean = false,
+    onSelectSource: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val storage = remember(busy, checking, available) {
@@ -3315,7 +3356,11 @@ internal fun UpdatesScreen(
         runCatching { primaryFocus.requestFocus() }
     }
     Column(
-        Modifier.fillMaxSize().padding(horizontal = Gutter, vertical = 40.dp),
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = Gutter, vertical = 40.dp)
+            .testTag("updates-content"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Text("App updates", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
@@ -3365,6 +3410,70 @@ internal fun UpdatesScreen(
                 }
             }
         }
+
+        val sourceRows = remember(sourceOptions, preferredSource) { preferredSourceRows(sourceOptions, preferredSource) }
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                if (profileName.isNullOrBlank()) "Preferred source" else "Preferred source for $profileName",
+                color = TextPrimary,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Which backend this profile should stream from first. Automatic lets the server choose.",
+                color = Muted,
+                fontSize = 13.sp,
+                modifier = Modifier.widthIn(max = 620.dp),
+            )
+            if (sourceRows.isEmpty()) {
+                Text("This server did not offer any sources.", color = Muted, fontSize = 13.sp)
+            } else {
+                sourceRows.forEach { row ->
+                    PreferredSourceRowItem(row = row, enabled = !saving, onSelect = { onSelectSource(row.key) })
+                }
+            }
+        }
+    }
+}
+
+/** One row of UpdatesScreen's Preferred source list. */
+@Composable
+private fun PreferredSourceRowItem(row: PreferredSourceRow, enabled: Boolean, onSelect: () -> Unit) {
+    var focused by remember(row.key) { mutableStateOf(false) }
+    // A backend the deployment switched off stays listed but cannot be picked.
+    val selectable = enabled && !row.disabled
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .widthIn(max = 620.dp)
+            .testTag("preferred-source-${row.key}")
+            .onFocusChanged { focused = it.isFocused || it.hasFocus }
+            .focusable(enabled = selectable)
+            .clickable(enabled = selectable, onClick = onSelect)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (focused) PanelFocused else Panel)
+            .border(
+                width = if (row.selected || focused) 2.dp else 1.dp,
+                color = when {
+                    focused -> BorderFocused
+                    row.selected -> Purple
+                    else -> BorderIdle
+                },
+                shape = RoundedCornerShape(8.dp),
+            )
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text(
+            row.label,
+            color = if (row.disabled) Muted.copy(alpha = 0.55f) else TextPrimary,
+            fontSize = 15.sp,
+            fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Normal,
+            modifier = Modifier.weight(1f),
+        )
+        row.note?.let { Text(it, color = Muted, fontSize = 12.sp) }
+        if (row.selected) Text("Current", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

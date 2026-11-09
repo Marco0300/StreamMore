@@ -154,3 +154,31 @@ internal fun collectionMeta(card: MediaCard): String {
     card.rating?.let { values += "★ %.1f".format(it) }
     return values.joinToString(" · ")
 }
+
+// ── Preferred source (per profile) ───────────────────────────────────────────
+
+/** One focusable row in the Updates screen's Preferred source list. */
+internal data class PreferredSourceRow(
+    val key: String,
+    val label: String,
+    val selected: Boolean,
+    val disabled: Boolean,
+    /** Why the row cannot be picked, or null when it can. */
+    val note: String? = null,
+)
+
+/**
+ * Turn the server's source options into rows. Labels stay exactly as the server
+ * sent them; a backend the deployment switched off is listed but cannot be
+ * picked, because choosing it would only make playback fail later.
+ */
+internal fun preferredSourceRows(options: List<SourceOption>, selectedKey: String): List<PreferredSourceRow> =
+    options.map { option ->
+        PreferredSourceRow(
+            key = option.key,
+            label = option.label,
+            selected = option.key == selectedKey,
+            disabled = option.off,
+            note = if (option.off) "Off for this server" else null,
+        )
+    }
