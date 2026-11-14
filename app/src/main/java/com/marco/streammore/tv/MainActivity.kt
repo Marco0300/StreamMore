@@ -3633,6 +3633,9 @@ internal fun PlayerScreen(
     var playbackPosition by remember(source) { mutableStateOf(0L) }
     var playbackDuration by remember(source) { mutableStateOf(0L) }
     var isPlaying by remember(source) { mutableStateOf(true) }
+    // Whether this source ever reached playing. Once true it stays true, so a pause
+    // later on is not mistaken for a source that never started.
+    var playbackStarted by remember(source) { mutableStateOf(false) }
     var introDbTimings by remember(tmdbId, season, episode) { mutableStateOf(IntroDbTimings()) }
     var skipTarget by remember(source) { mutableStateOf<SkipTarget?>(null) }
     var dismissedSkipTarget by remember(source) { mutableStateOf<SkipTarget?>(null) }
@@ -3719,11 +3722,25 @@ internal fun PlayerScreen(
                             endOfMediaReached = true
                             return
                         }
+                        // A source that fails outright gets no start window: the next
+                        // source the server ranked takes over at once, resuming where
+                        // this one stopped. Only the last source is left to report the
+                        // error, because there is nothing else to try.
+                        val next = nextSourceAfter(sources, source)
+                        if (next != null) {
+                            Log.w(
+                                "StreammorePlayer",
+                                "source failed (${error.errorCodeName}) at ${position}ms — trying ${next.name}",
+                            )
+                            onSelectSource(next, resumePositionForFallback(position, initialPositionMs))
+                            return
+                        }
                         playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
                         Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
                     }
                     override fun onIsPlayingChanged(playing: Boolean) {
                         isPlaying = playing
+                        if (playing) playbackStarted = true
                     }
                 })
                 val tracks = subtitles.map { item ->
@@ -3749,6 +3766,26 @@ internal fun PlayerScreen(
                 prepare()
                 playWhenReady = true
             }
+    }
+
+    // A source that never starts playing is not worth waiting on: after the start
+    // window the player hands over to the next source the server ranked, which is
+    // how a profile's preferred backend failing still ends in playback instead of an
+    // error banner. The chain is bounded by the list — the last source keeps the
+    // screen rather than looping back onto one that already failed.
+    LaunchedEffect(source, sources.size) {
+        val next = nextSourceAfter(sources, source) ?: return@LaunchedEffect
+        val startedAt = System.currentTimeMillis()
+        delay(PLAYBACK_START_TIMEOUT_MS)
+        val elapsed = System.currentTimeMillis() - startedAt
+        val paused = runCatching { !player.playWhenReady }.getOrDefault(false)
+        if (shouldTryNextSource(elapsed, playbackStarted, paused, next != null)) {
+            Log.w(
+                "StreammorePlayer",
+                "no playback after ${elapsed}ms on ${Uri.parse(source).host} — trying ${next.name}",
+            )
+            onSelectSource(next, initialPositionMs ?: 0L)
+        }
     }
 
     LaunchedEffect(source) {

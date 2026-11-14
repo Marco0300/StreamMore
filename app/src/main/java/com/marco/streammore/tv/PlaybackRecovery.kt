@@ -95,3 +95,49 @@ internal fun resolveFailureMessage(reason: String?): String {
             "Could not start this episode — press OK to try again"
     }
 }
+
+// How long a source gets to start playing before the player moves on. Ten seconds
+// covers an Xtream handshake and the first buffered segment, and is short enough
+// that a viewer does not sit on a black screen wondering whether to press Back.
+internal const val PLAYBACK_START_TIMEOUT_MS = 10_000L
+
+/**
+ * True when the source the viewer is on has had its chance: the player was handed
+ * it, the start window has passed, and it is still not playing. Then the next
+ * source the server ranked takes over — which is how a profile's preferred backend
+ * failing still ends in playback instead of an error.
+ *
+ * A player the viewer paused is their decision, not a broken source, and a stream
+ * with nothing after it has nowhere to fall back to, so neither one switches.
+ */
+internal fun shouldTryNextSource(
+    elapsedMs: Long,
+    hasStartedPlayback: Boolean,
+    userPaused: Boolean,
+    hasNextSource: Boolean,
+    timeoutMs: Long = PLAYBACK_START_TIMEOUT_MS,
+): Boolean = hasNextSource && !hasStartedPlayback && !userPaused && elapsedMs >= timeoutMs
+
+/**
+ * Where the fallback source resumes after the one in use fails outright. The failed
+ * player's own position wins once it got further than the stored resume point, so a
+ * film that died twenty minutes in continues from there; before that, the resume
+ * point stands, so a film picked up at 30 minutes does not restart from the top on
+ * the next source.
+ */
+internal fun resumePositionForFallback(playerPositionMs: Long, initialPositionMs: Long?): Long =
+    maxOf(playerPositionMs.coerceAtLeast(0L), initialPositionMs?.coerceAtLeast(0L) ?: 0L)
+
+/**
+ * The source after the one playing, in the order the server ranked them — a
+ * profile's preferred backend leads that list, so this is the next-best link.
+ * Null on the last entry, which ends the chain rather than looping back onto a
+ * source that has already failed, and null when the playing URL is not in the
+ * list at all (a Live TV or trailer source), because the position is then unknown
+ * and switching could restart something the viewer is already watching.
+ */
+internal fun nextSourceAfter(sources: List<StreamSource>, currentUrl: String): StreamSource? {
+    val index = sources.indexOfFirst { it.tvUrl() == currentUrl }
+    if (index < 0) return null
+    return sources.getOrNull(index + 1)
+}
