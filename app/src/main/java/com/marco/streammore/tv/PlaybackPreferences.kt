@@ -39,3 +39,16 @@ internal class PlaybackPrefsStore(context: Context) {
 
     private fun key(profileId: String, field: String) = "$profileId:$field"
 }
+
+/** "spa" -> "Spanish". Falls back to the code when the platform has no name for it. */
+internal fun languageDisplayName(code: String): String {
+    val name = java.util.Locale.forLanguageTag(code).getDisplayLanguage(java.util.Locale.ENGLISH)
+    return name.takeIf { it.isNotBlank() && !it.equals(code, ignoreCase = true) } ?: code
+}
+
+/** One-time tips: each shows once per install. */
+internal class HintStore(context: Context) {
+    private val prefs = context.applicationContext.getSharedPreferences("streammore_hints", Context.MODE_PRIVATE)
+    fun seen(id: String): Boolean = prefs.getBoolean(id, false)
+    fun markSeen(id: String) = prefs.edit().putBoolean(id, true).apply()
+}

@@ -233,7 +233,7 @@ class ScreenshotTest {
         for (x in 0 until bitmap.width) {
             for (y in 0 until bitmap.height) {
                 val pixel = bitmap.getPixel(x, y)
-                if (Color.red(pixel) > 120 && Color.blue(pixel) > 180 && Color.green(pixel) < 150) count++
+                if (Color.red(pixel) > 100 && Color.blue(pixel) > 180 && Color.green(pixel) < 150) count++
             }
         }
         return count
@@ -444,13 +444,12 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
 
-        val kicker = compose.onNodeWithText("SERIES", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val title = compose.onNodeWithText("Reacher", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        val play = compose.onNodeWithText("▶ Play", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
+        val play = compose.onNodeWithText("Play", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val moreInfo = compose.onNodeWithText("More info", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
         val trending = compose.onNodeWithText("Trending Now", useUnmergedTree = true).fetchSemanticsNode().boundsInRoot
-        check(kicker.top < title.top && title.bottom < play.top && play.bottom < trending.top) {
-            "hero hierarchy should lead into the trending shelf: kicker=$kicker title=$title play=$play trending=$trending"
+        check(title.bottom < play.top && play.bottom < trending.top) {
+            "hero hierarchy should lead into the trending shelf: title=$title play=$play trending=$trending"
         }
         check(play.left < moreInfo.left && moreInfo.top == play.top) {
             "Play and More info should form a single horizontal action row: Play=$play MoreInfo=$moreInfo"
@@ -560,7 +559,7 @@ class ScreenshotTest {
         val x = (caption.left - cardWidth * 0.045f + 2).toInt()
         val purple = (image.top.toInt() + 20 until image.bottom.toInt() - 20).count { y ->
             val pixel = bitmap.getPixel(x, y)
-            Color.red(pixel) > 120 && Color.blue(pixel) > 180 && Color.green(pixel) < 150
+            Color.red(pixel) > 100 && Color.blue(pixel) > 180 && Color.green(pixel) < 150
         }
         check(purple > 20) { "focused ${if (wide) "wide" else "poster"} card's left border is clipped ($purple pixels)" }
         val content = compose.onNodeWithTag("main-app-content").fetchSemanticsNode().boundsInRoot
@@ -837,7 +836,7 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
 
-        compose.onNodeWithText("♪ Audio").performClick()
+        compose.onNodeWithText("Audio").performClick()
         check(clickCount == 1) { "the audio selector control should be visible and clickable before track metadata arrives" }
     }
 

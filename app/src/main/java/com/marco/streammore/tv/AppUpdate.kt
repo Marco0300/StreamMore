@@ -145,7 +145,7 @@ internal suspend fun checkForAppUpdate(): AppUpdate? = withContext(Dispatchers.I
     try {
         if (connection.responseCode == HttpURLConnection.HTTP_NOT_FOUND) return@withContext null
         if (connection.responseCode !in 200..299) {
-            throw IllegalStateException("GitHub update check failed (${connection.responseCode})")
+            throw IllegalStateException("Couldn't check for updates. Try again later.")
         }
         val release = selectLatestTvRelease(
             parseTvReleaseCandidates(connection.inputStream.bufferedReader().use { it.readText() }),
@@ -176,7 +176,7 @@ internal suspend fun downloadAndInstallUpdate(context: Context, update: AppUpdat
     }
     try {
         if (connection.responseCode !in 200..299) {
-            throw IllegalStateException("Update download failed (${connection.responseCode})")
+            throw IllegalStateException("Couldn't download the update. Try again later.")
         }
         connection.inputStream.use { input -> apk.outputStream().use { output -> input.copyTo(output) } }
     } finally {
@@ -188,7 +188,7 @@ internal suspend fun downloadAndInstallUpdate(context: Context, update: AppUpdat
             .joinToString("") { byte -> "%02x".format(byte) }
         if (!actual.equals(expected, ignoreCase = true)) {
             apk.delete()
-            throw SecurityException("Downloaded update checksum did not match GitHub")
+            throw SecurityException("The download was damaged. Try the update again.")
         }
     }
 

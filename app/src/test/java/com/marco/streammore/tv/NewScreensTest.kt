@@ -128,7 +128,7 @@ class NewScreensTest {
         compose.onNodeWithText("Tomorrow").assertExists()
         compose.onNodeWithText("Just aired").assertExists()
         compose.onNodeWithText("2 episodes").assertExists()
-        compose.onNodeWithText("Air dates for the 2 shows you are watching · refreshed periodically.").assertExists()
+        compose.onNodeWithText("2 shows you follow").assertExists()
         compose.onAllNodesWithText("S02E03", substring = true)[0].assertExists()
 
         compose.onNodeWithTag("upcoming-entry-1396").performClick()
@@ -303,7 +303,7 @@ class NewScreensTest {
         compose.onNodeWithTag("person-card-2001").performClick()
         compose.runOnIdle { assertEquals(2001, opened?.tmdbId) }
 
-        compose.onNodeWithText("‹ Back").performClick()
+        compose.onNodeWithText("Back").performClick()
         compose.runOnIdle { assertEquals(1, back) }
     }
 

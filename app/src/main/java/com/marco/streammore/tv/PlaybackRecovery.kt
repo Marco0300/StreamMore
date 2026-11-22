@@ -84,15 +84,15 @@ internal fun resolveFailureMessage(reason: String?): String {
     val value = reason?.lowercase().orEmpty()
     return when {
         value.contains("all-accounts-at-capacity") ->
-            "Every Xtream account is busy streaming — press OK to try again"
+            "All streams are busy. Press OK to retry."
         value.contains("no-eligible-account") ->
-            "No Xtream account could serve this episode right now — press OK to try again"
+            "Can't stream this episode right now. Press OK to retry."
         value.contains("not-indexed") ->
-            "This episode is not in the Xtream catalogue"
+            "This episode isn't available."
         value.contains("unsupported-content-kind") || value.contains("title-required") ->
-            "This title cannot be resolved"
+            "This title can't be played."
         else ->
-            "Could not start this episode — press OK to try again"
+            "Couldn't start this episode. Press OK to retry."
     }
 }
 

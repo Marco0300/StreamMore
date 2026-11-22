@@ -114,3 +114,12 @@ class FeaturePackTest {
         assertTrue(clearLine, clearLine.contains("playbackId=" + json.getString("playbackId")))
     }
 }
+
+class LanguageNameTest {
+    @org.junit.Test
+    fun languageCodesBecomeReadableNames() {
+        org.junit.Assert.assertEquals("English", languageDisplayName("en"))
+        org.junit.Assert.assertEquals("Spanish", languageDisplayName("spa"))
+        org.junit.Assert.assertEquals("zzz", languageDisplayName("zzz"))
+    }
+}

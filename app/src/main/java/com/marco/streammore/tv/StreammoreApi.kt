@@ -55,7 +55,7 @@ class StreammoreApi(
         return when (body.optString("status")) {
             "pending" -> null
             "approved" -> body
-            else -> throw ApiException(-1, "Unexpected device sign-in response")
+            else -> throw ApiException(-1, "Sign-in didn't finish. Get a new code.")
         }
     }
 
@@ -512,7 +512,7 @@ class StreammoreApi(
                     throw ApiException(response.code, message)
                 }
                 val result = runCatching { JSONObject(text) }.getOrElse {
-                    throw ApiException(response.code, "Backend returned invalid JSON from $path")
+                    throw ApiException(response.code, "Streammore sent an unexpected reply. Try again in a minute.")
                 }
                 // A late response after Back must not resurrect a cancelled sign-in.
                 currentCoroutineContext().ensureActive()
@@ -528,7 +528,7 @@ class StreammoreApi(
             throw api
         } catch (failure: IOException) {
             Log.e(TAG, "$method $endpoint failed", failure)
-            throw ApiException(-1, "Cannot reach Streammore backend at ${baseUrl.trimEnd('/')}: ${failure.message ?: failure.javaClass.simpleName}")
+            throw ApiException(-1, "Can't reach Streammore. Check the TV's internet connection.")
         }
     }
 

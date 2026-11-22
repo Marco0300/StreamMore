@@ -128,8 +128,11 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Playback falls back on its own now: a source that errors is dropped immediately, and a source that has not started playing within 10 seconds is given up on — either way the next source the server ranked takes over, resuming where it stopped. The last source still shows the error instead of looping.
-            - "Preferred source" under App updates decides which backend's links come first for each profile. It only reorders them: every other backend keeps its place in the server's plan and is still queried, so nothing is hidden. Automatic keeps the server's own plan.
+            - Home appears right away; your list and missing artwork fill in afterwards.
+            - Upcoming has its own icon, and text-character icons are now proper vector icons.
+            - Larger, consistent text sizes and better contrast on purple buttons.
+            - Load errors stay on screen with a Retry button; error messages are in plain language.
+            - The audio menu shows the language your profile prefers, and a one-time tip explains hold-OK options.
 
             SHA-256: `${{ env.SHA256 }}`
 

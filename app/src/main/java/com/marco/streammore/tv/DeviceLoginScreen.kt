@@ -85,18 +85,18 @@ internal fun DeviceCodeContent(state: DeviceLoginState, onRetry: () -> Unit, onB
     }
     Column(Modifier.fillMaxSize().padding(48.dp), verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("Sign in with a code", fontSize = 30.sp, fontWeight = FontWeight.Bold)
+        Text("Sign in with a code", fontSize = Fs.Display, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(20.dp))
-        Text("On your phone or computer, sign in at", color = Muted, fontSize = 18.sp)
-        Text("https://streammore.mmcloud.co.za/account", fontSize = 22.sp)
+        Text("On your phone or computer, sign in at", color = Muted, fontSize = Fs.Subtitle)
+        Text("https://streammore.mmcloud.co.za/account", fontSize = Fs.Title)
         Spacer(Modifier.height(12.dp))
-        Text("Choose Link a TV, then enter this code.", color = Muted, fontSize = 18.sp)
+        Text("Choose Link a TV, then enter this code.", color = Muted, fontSize = Fs.Subtitle)
         state.userCode?.let {
             Spacer(Modifier.height(16.dp))
-            Text(it, fontSize = 48.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+            Text(it, fontSize = Fs.Hero, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
         }
         Spacer(Modifier.height(16.dp))
-        Text(state.message, fontSize = 16.sp, color = Muted)
+        Text(state.message, fontSize = Fs.BodyLarge, color = Muted)
         Spacer(Modifier.height(20.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
             if (state.retry) {

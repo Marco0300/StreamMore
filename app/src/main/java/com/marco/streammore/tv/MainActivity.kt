@@ -142,6 +142,8 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -158,6 +160,8 @@ import java.time.format.DateTimeFormatter
 // near-black, which renders every default-coloured Text invisible on the black
 // background.
 internal val Purple = Color(0xFF9B6DFF)
+/** Filled surfaces that carry white text: 5.5:1, where [Purple] gives 3.5:1. */
+internal val PurpleFill = Color(0xFF7048E8)
 internal val Bg = Color(0xFF0A0810)
 internal val Panel = Color(0xFF181321)
 internal val PanelFocused = Color(0xFF30204A)
@@ -174,8 +178,20 @@ internal val ErrorText = Color(0xFFFF8B90)
 internal val ErrorFill = Color(0xFF5B171B)
 internal val WarnYellow = Color(0xFFFFD54F)
 internal val MatchGreen = Color(0xFF46D369)
-internal val MetaText = Color(0xFFE5E5E5)
-internal val BadgeBorder = Color(0xFF777777)
+internal val MetaText = Color(0xFFE8E4EE)
+internal val BadgeBorder = Color(0xFF7D7590)
+
+/** The only text sizes the app uses. 12sp is the floor, for captions and badges. */
+internal object Fs {
+    val Caption = 12.sp
+    val Body = 14.sp
+    val BodyLarge = 16.sp
+    val Subtitle = 18.sp
+    val Title = 22.sp
+    val Headline = 26.sp
+    val Display = 30.sp
+    val Hero = 40.sp
+}
 
 internal data class AvailableVideoQuality(
     val label: String,
@@ -287,7 +303,7 @@ internal fun availableAudioTracks(tracks: Tracks): List<AvailableAudioTrack> {
 internal data class AudioTrackMenuOption(val key: String, val label: String)
 
 internal val StreammoreScheme = darkColorScheme(
-    primary = Purple,
+    primary = PurpleFill,
     onPrimary = Color.White,
     background = Bg,
     onBackground = TextPrimary,
@@ -316,7 +332,7 @@ private val StillWidth = 250.dp
 internal val StillHeight = 141.dp
 private val SideNavWidth = 64.dp
 private val SideNavAccent = Purple
-private val SideNavIdle = Color(0xFF8E8E8E)
+private val SideNavIdle = Color(0xFF9D96AD)
 
 /**
  * How long the player shows the finished frame before auto-exiting to the page
@@ -420,6 +436,8 @@ internal fun StreammoreTvApp() {
     val api = remember(context) { StreammoreApi(context.applicationContext) }
     val scope = rememberCoroutineScope()
     val playbackPrefs = remember(context) { PlaybackPrefsStore(context.applicationContext) }
+    val hints = remember(context) { HintStore(context.applicationContext) }
+    var tip by remember { mutableStateOf<String?>(null) }
     var screen by remember { mutableStateOf<TvScreen>(TvScreen.Login) }
     var profiles by remember { mutableStateOf<List<Profile>>(emptyList()) }
     var pendingProfile by remember { mutableStateOf<Profile?>(null) }
@@ -469,10 +487,11 @@ internal fun StreammoreTvApp() {
     val routeStateHolder = rememberSaveableStateHolder()
 
     LaunchedEffect(error) {
-        if (error != null) {
-            delay(5_000)
-            error = null
-        }
+        val message = error ?: return@LaunchedEffect
+        // Load failures on these screens stay until retried or dismissed with Back.
+        if (screen is TvScreen.Home || screen is TvScreen.Browse || screen is TvScreen.NewHot || screen is TvScreen.MyList) return@LaunchedEffect
+        delay((message.length * 70L).coerceAtLeast(7_000L))
+        error = null
     }
 
     LaunchedEffect(screen, profileId) {
@@ -533,24 +552,33 @@ internal fun StreammoreTvApp() {
                 rows = data.rows
                 billboard = data.billboard
                 autoplayPreviews = data.autoplayPreviews
-                runCatching { api.myList(id) }.onSuccess { list ->
-                    myListKeys = list.map { "${it.mediaType}:${it.tmdbId}" }.toSet()
+                // Home goes up first; the list state and missing card artwork fill in after.
+                screen = TvScreen.Home
+                loading = false
+                scope.launch {
+                    runCatching { api.myList(id) }.onSuccess { list ->
+                        myListKeys = list.map { "${it.mediaType}:${it.tmdbId}" }.toSet()
+                    }
                 }
                 val missingContinue = data.rows.firstOrNull { it.id == "continue" }?.items.orEmpty()
                     .filter { it.poster.isNullOrBlank() || it.year.isNullOrBlank() }
                 if (missingContinue.isNotEmpty()) {
-                    val hydrated = missingContinue.associateWith { card ->
-                        runCatching { api.detail(card.mediaType, card.tmdbId, id) }.getOrNull()
-                    }
-                    rows = data.rows.map { row ->
-                        if (row.id != "continue") row else row.copy(items = row.items.map { card ->
-                            val detailCard = hydrated[card]
-                            if (detailCard == null) card else card.copy(
-                                poster = card.poster ?: detailCard.poster,
-                                backdrop = card.backdrop ?: detailCard.backdrop,
-                                year = card.year ?: detailCard.year,
-                            )
-                        })
+                    scope.launch {
+                        val hydrated = kotlinx.coroutines.coroutineScope {
+                            missingContinue.map { card ->
+                                async { card to runCatching { api.detail(card.mediaType, card.tmdbId, id) }.getOrNull() }
+                            }.awaitAll().toMap()
+                        }
+                        rows = rows.map { row ->
+                            if (row.id != "continue") row else row.copy(items = row.items.map { card ->
+                                val detailCard = hydrated[card]
+                                if (detailCard == null) card else card.copy(
+                                    poster = card.poster ?: detailCard.poster,
+                                    backdrop = card.backdrop ?: detailCard.backdrop,
+                                    year = card.year ?: detailCard.year,
+                                )
+                            })
+                        }
                     }
                 }
                 Log.d(
@@ -558,7 +586,10 @@ internal fun StreammoreTvApp() {
                     "billboard=${data.billboard?.title} type=${data.billboard?.mediaType} " +
                         "trailerKey=${data.billboard?.trailerKey} autoplayPreviews=${data.autoplayPreviews}",
                 )
-                screen = TvScreen.Home
+                if (!hints.seen("long_press")) {
+                    hints.markSeen("long_press")
+                    tip = "Tip: hold OK on any title for more options"
+                }
             }
             .onFailure { error = it.message ?: "Could not load Home" }
         loading = false
@@ -942,6 +973,7 @@ internal fun StreammoreTvApp() {
     }
 
     fun navigate(target: TvScreen) {
+        error = null
         when (target) {
             TvScreen.Home -> profileId?.let { loadHome(it) }
             is TvScreen.Browse -> loadCards(target.mediaType)
@@ -1266,7 +1298,23 @@ internal fun StreammoreTvApp() {
                 }
                 if (loading && screen !is TvScreen.Player) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Purple)
                 if (error != null && screen !is TvScreen.Login && screen !is TvScreen.Live && screen !is TvScreen.Detail && screen !is TvScreen.Player && screen !is TvScreen.Upcoming && screen !is TvScreen.Person) {
-                    ErrorBanner(error!!, Modifier.align(Alignment.BottomCenter))
+                    var retry: (() -> Unit)? = null
+                    when (val shown = screen) {
+                        TvScreen.Home -> profileId?.let { id -> retry = { error = null; loadHome(id) } }
+                        is TvScreen.Browse -> retry = { error = null; loadCards(shown.mediaType) }
+                        TvScreen.NewHot -> retry = { error = null; loadNewHot() }
+                        TvScreen.MyList -> retry = { error = null; loadMyList() }
+                        else -> Unit
+                    }
+                    if (retry != null) BackHandler { error = null }
+                    ErrorBanner(error!!, Modifier.align(Alignment.BottomCenter), onRetry = retry)
+                }
+                tip?.let { shown ->
+                    LaunchedEffect(shown) {
+                        delay(8_000)
+                        tip = null
+                    }
+                    if (screen is TvScreen.Home && error == null) HintBanner(shown, Modifier.align(Alignment.BottomCenter))
                 }
                 if (availableUpdate != null && !updateDismissed) {
                     UpdatePrompt(
@@ -1313,7 +1361,7 @@ internal fun AppShell(
         SideNavDestination("search", "Search", R.drawable.ic_search, TvScreen.Search, screen is TvScreen.Search),
         SideNavDestination("home", "Home", R.drawable.ic_nav_home, TvScreen.Home, screen is TvScreen.Home),
         SideNavDestination("new-hot", "New & Hot", R.drawable.ic_nav_trending, TvScreen.NewHot, screen is TvScreen.NewHot),
-        SideNavDestination("upcoming", "Upcoming", R.drawable.ic_nav_my_list, TvScreen.Upcoming, screen is TvScreen.Upcoming),
+        SideNavDestination("upcoming", "Upcoming", R.drawable.ic_calendar, TvScreen.Upcoming, screen is TvScreen.Upcoming),
         SideNavDestination("tv-shows", "TV Shows", R.drawable.ic_nav_tv, TvScreen.Browse("tv"), screen is TvScreen.Browse && screen.mediaType == "tv"),
         SideNavDestination("movies", "Movies", R.drawable.ic_nav_movies, TvScreen.Browse("movie"), screen is TvScreen.Browse && screen.mediaType == "movie"),
         SideNavDestination("live-tv", "Live TV", R.drawable.ic_nav_live_tv, TvScreen.Live, screen is TvScreen.Live),
@@ -1348,7 +1396,7 @@ internal fun AppShell(
                 Modifier
                     .width(SideNavWidth)
                     .fillMaxHeight()
-                    .background(Color(0xFF050505))
+                    .background(Color(0xFF07050C))
                     .testTag("side-navigation-rail"),
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
@@ -1422,7 +1470,7 @@ internal fun AppShell(
                 Text(
                     label,
                     color = TextPrimary,
-                    fontSize = 14.sp,
+                    fontSize = Fs.Body,
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                 )
@@ -1441,8 +1489,7 @@ internal fun AppShell(
                 shadowElevation = 18.dp,
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("PROFILE", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                    Text(profile?.name ?: "Profile", color = TextPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text(profile?.name ?: "Profile", color = TextPrimary, fontSize = Fs.Subtitle, fontWeight = FontWeight.SemiBold)
                     ProfileMenuItem("Switch profile", Modifier.focusRequester(switchProfileFocus)) {
                         profileMenuOpen = false
                         navigate(TvScreen.Profiles)
@@ -1467,7 +1514,7 @@ private fun ProfileMenuItem(label: String, modifier: Modifier, onClick: () -> Un
             .focusable()
             .clickable(onClick = onClick)
             .clip(RoundedCornerShape(8.dp))
-            .background(if (focused) Purple else PanelFocused)
+            .background(if (focused) PurpleFill else PanelFocused)
             .border(
                 width = if (focused) 2.dp else 1.dp,
                 color = if (focused) BorderFocused else Purple,
@@ -1475,7 +1522,7 @@ private fun ProfileMenuItem(label: String, modifier: Modifier, onClick: () -> Un
             )
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
-        Text(label, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Text(label, color = TextPrimary, fontSize = Fs.Body, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -1578,7 +1625,7 @@ private fun ProfileMenuTrigger(
                 .background(PanelFocused),
             contentAlignment = Alignment.Center,
         ) {
-            Text(avatar, color = TextPrimary, fontSize = 16.sp, maxLines = 1)
+            Text(avatar, color = TextPrimary, fontSize = Fs.BodyLarge, maxLines = 1)
         }
     }
 }
@@ -1709,7 +1756,7 @@ private fun Ribbon(label: String) {
     Text(
         label,
         color = Color.White,
-        fontSize = 11.sp,
+        fontSize = Fs.Caption,
         fontWeight = FontWeight.Bold,
         maxLines = 1,
         modifier = Modifier
@@ -1720,7 +1767,7 @@ private fun Ribbon(label: String) {
 
 @Composable
 private fun WatchProgress(percent: Double) {
-    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
+    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3050))) {
         Box(Modifier.fillMaxWidth(percent.coerceIn(0.0, 1.0).toFloat()).height(4.dp).background(Purple))
     }
 }
@@ -1734,7 +1781,7 @@ private fun ProgrammeProgress(programme: LiveProgram) {
     val fraction = programmeProgressFraction(programme.startMs, programme.endMs, System.currentTimeMillis())
     if (fraction <= 0.0) return
     Spacer(Modifier.height(5.dp))
-    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3A3A))) {
+    Box(Modifier.fillMaxWidth().height(4.dp).background(Color(0xFF3A3050))) {
         Box(Modifier.fillMaxWidth(fraction.toFloat()).height(4.dp).background(Purple))
     }
 }
@@ -1778,18 +1825,18 @@ internal fun MediaCardView(
         Text(
             card.title,
             color = TextPrimary,
-            fontSize = 14.sp,
+            fontSize = Fs.Body,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
         card.sub?.takeIf { it.isNotBlank() }?.let {
-            Text(it, color = Purple, fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(it, color = Purple, fontSize = Fs.Caption, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Text(
             listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · "),
             color = Muted,
-            fontSize = 12.5.sp,
+            fontSize = Fs.Caption,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -1830,7 +1877,7 @@ internal fun WideCardView(
                 Text(
                     tag,
                     color = Color.White,
-                    fontSize = 11.sp,
+                    fontSize = Fs.Caption,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     modifier = Modifier
@@ -1846,7 +1893,7 @@ internal fun WideCardView(
         Text(
             card.title,
             color = TextPrimary,
-            fontSize = 14.sp,
+            fontSize = Fs.Body,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -1856,7 +1903,7 @@ internal fun WideCardView(
             Text(
                 line,
                 color = if (remaining != null) Purple else Muted,
-                fontSize = 12.5.sp,
+                fontSize = Fs.Caption,
                 fontWeight = if (remaining != null) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1896,6 +1943,28 @@ private fun FocusFirstWhenReady(ready: Boolean, requester: FocusRequester) {
  * no feedback at all. The focused button therefore gets a bright ring and a small
  * scale-up, matching the poster tiles.
  */
+/** An icon followed by its label, sized to the text so the pair reads as one control. */
+@Composable
+internal fun IconText(
+    icon: Int,
+    text: String,
+    modifier: Modifier = Modifier,
+    color: Color = Color.Unspecified,
+    fontSize: androidx.compose.ui.unit.TextUnit = Fs.Body,
+    fontWeight: FontWeight? = null,
+) {
+    val tint = if (color == Color.Unspecified) androidx.compose.material3.LocalContentColor.current else color
+    Row(modifier, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Icon(
+            painter = painterResource(icon),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(with(LocalDensity.current) { fontSize.toDp() + 4.dp }),
+        )
+        Text(text, color = tint, fontSize = fontSize, fontWeight = fontWeight, maxLines = 1)
+    }
+}
+
 @Composable
 internal fun TvButton(
     onClick: () -> Unit,
@@ -1975,16 +2044,16 @@ internal fun LoginScreen(loading: Boolean, error: String?, onCodeLogin: (() -> U
             enabled = !loading && email.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.width(fieldWidth),
         ) {
-            Text("Sign in", fontSize = 16.sp, modifier = Modifier.padding(vertical = 4.dp))
+            Text("Sign in", fontSize = Fs.BodyLarge, modifier = Modifier.padding(vertical = 4.dp))
         }
         onCodeLogin?.let { openCode ->
             Spacer(Modifier.height(12.dp))
             TvButton(onClick = { if (!loading) openCode() }, modifier = Modifier.width(fieldWidth)) {
-                Text("Sign in with a code", fontSize = 16.sp)
+                Text("Sign in with a code", fontSize = Fs.BodyLarge)
             }
         }
         error?.let {
-            Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 18.dp).width(fieldWidth))
+            Text(it, color = ErrorText, fontSize = Fs.Body, modifier = Modifier.padding(top = 18.dp).width(fieldWidth))
         }
     }
 }
@@ -1994,8 +2063,8 @@ internal fun ProfilePinScreen(profile: Profile, error: String?, onSubmit: (Strin
     var pin by remember(profile.id) { mutableStateOf("") }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Profile locked", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            Text("Enter the PIN for ${profile.name}", color = Muted, fontSize = 15.sp)
+            Text("Profile locked", color = TextPrimary, fontSize = Fs.Display, fontWeight = FontWeight.Bold)
+            Text("Enter the PIN for ${profile.name}", color = Muted, fontSize = Fs.BodyLarge)
             OutlinedTextField(
                 value = pin,
                 onValueChange = { value -> if (value.length <= 4 && value.all(Char::isDigit)) pin = value },
@@ -2003,9 +2072,9 @@ internal fun ProfilePinScreen(profile: Profile, error: String?, onSubmit: (Strin
                 singleLine = true,
             )
             TvButton(onClick = { if (pin.length == 4) onSubmit(pin) }, primary = true) {
-                Text("Unlock", fontSize = 15.sp)
+                Text("Unlock", fontSize = Fs.BodyLarge)
             }
-            error?.let { Text(it, color = ErrorText, fontSize = 14.sp) }
+            error?.let { Text(it, color = ErrorText, fontSize = Fs.Body) }
         }
     }
 }
@@ -2052,7 +2121,7 @@ internal fun AvatarGlyph(profile: Profile, size: Dp, color: Color = TextPrimary)
 internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (Profile) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Who's watching?", fontSize = 30.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+            Text("Who's watching?", fontSize = Fs.Display, fontWeight = FontWeight.Bold, color = TextPrimary)
             Spacer(Modifier.height(28.dp))
             if (profiles.isEmpty()) {
                 Text("No profiles are available for this account.", color = Muted)
@@ -2071,18 +2140,18 @@ internal fun ProfileScreen(profiles: List<Profile>, error: String?, onSelect: (P
                             Text(
                                 profile.name,
                                 color = TextPrimary,
-                                fontSize = 16.sp,
+                                fontSize = Fs.BodyLarge,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                             )
-                            if (profile.kids) Text("KIDS", color = WarnYellow, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            if (profile.kids) Text("KIDS", color = WarnYellow, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
             error?.let {
-                Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 20.dp))
+                Text(it, color = ErrorText, fontSize = Fs.Body, modifier = Modifier.padding(top = 20.dp))
             }
         }
     }
@@ -2149,8 +2218,8 @@ internal fun BillboardHero(
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 horizontalAlignment = Alignment.Start,
             ) {
-                Text("RATING", color = Muted, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                Text("${rating}/10", color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("RATING", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                Text("${rating}/10", color = Color.White, fontSize = Fs.Subtitle, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -2161,21 +2230,14 @@ internal fun BillboardHero(
                 .widthIn(max = 610.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text("S", color = SideNavAccent, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                Text(
-                    if (billboard.mediaType == "tv") "SERIES" else "FEATURED FILM",
-                    color = Color.White,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 2.4.sp,
-                )
+                Text("S", color = SideNavAccent, fontSize = Fs.Title, fontWeight = FontWeight.Black)
             }
             Spacer(Modifier.height(2.dp))
             Text(
                 billboard.title,
                 color = Color.White,
                 fontFamily = FontFamily.Serif,
-                fontSize = 50.sp,
+                fontSize = Fs.Hero,
                 lineHeight = 50.sp,
                 fontWeight = FontWeight.ExtraBold,
                 maxLines = 2,
@@ -2183,22 +2245,22 @@ internal fun BillboardHero(
             )
             Spacer(Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                billboard.year?.let { Text(it, color = Color.White, fontSize = 14.sp) }
+                billboard.year?.let { Text(it, color = Color.White, fontSize = Fs.Body) }
                 Text(
                     "HD",
                     color = Color.White,
-                    fontSize = 10.sp,
+                    fontSize = Fs.Caption,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(2.dp))
                         .padding(horizontal = 5.dp, vertical = 1.dp),
                 )
-                Text(if (billboard.mediaType == "tv") "TV Series" else "Movie", color = Color.White, fontSize = 14.sp)
+                Text(if (billboard.mediaType == "tv") "TV Series" else "Movie", color = Color.White, fontSize = Fs.Body)
             }
             Spacer(Modifier.height(10.dp))
             Text(
                 billboard.overview,
                 color = Color.White.copy(alpha = 0.94f),
-                fontSize = 15.sp,
+                fontSize = Fs.BodyLarge,
                 lineHeight = 21.sp,
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis,
@@ -2243,7 +2305,7 @@ private fun HeroActionButton(
                 focused = nowFocused
             }
             .clip(RoundedCornerShape(4.dp))
-            .background(if (primary) Color.White else Color(0xFF4A4A4A))
+            .background(if (primary) Color.White else Color(0xFF3A3050))
             .border(
                 width = if (focused) 2.dp else 0.dp,
                 color = if (focused) Color.White else Color.Transparent,
@@ -2253,13 +2315,11 @@ private fun HeroActionButton(
             .padding(horizontal = 18.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            if (primary) "▶ $label" else label,
-            color = if (primary) Color(0xFF111111) else Color.White,
-            fontSize = 15.sp,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-        )
+        if (primary) {
+            IconText(R.drawable.ic_play, label, color = Color(0xFF111111), fontSize = Fs.BodyLarge, fontWeight = FontWeight.Bold)
+        } else {
+            Text(label, color = Color.White, fontSize = Fs.BodyLarge, fontWeight = FontWeight.Bold, maxLines = 1)
+        }
     }
 }
 
@@ -2455,7 +2515,7 @@ internal fun RowSection(
     // A focused card surrounded by equally bright cards is much harder to find.
     var focusedIndex by remember { mutableStateOf<Int?>(null) }
     Column(Modifier.fillMaxWidth()) {
-        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+        Text(title, color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 16.dp))
         LazyRow(
             modifier = Modifier.fillMaxWidth().testTag("shelf-viewport-$title"),
@@ -2535,31 +2595,31 @@ internal fun BrowseScreen(
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
-            Text(title, color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TextPrimary, fontSize = Fs.Headline, fontWeight = FontWeight.Bold)
             if (totalResults > 0) {
-                Text("${cards.size} of $totalResults", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(start = 14.dp))
+                Text("${cards.size} of $totalResults", color = Muted, fontSize = Fs.Body, modifier = Modifier.padding(start = 14.dp))
             }
         }
         if (genres.isNotEmpty()) {
-            Text("Filter by genre", color = Muted, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
+            Text("Filter by genre", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 12.dp))
             LazyRow(
                 contentPadding = PaddingValues(vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 item {
                     TvButton(onClick = { onGenre(null) }, selected = selectedGenreId == null) {
-                        Text("All", color = TextPrimary, fontSize = 13.sp)
+                        Text("All", color = TextPrimary, fontSize = Fs.Body)
                     }
                 }
                 items(genres) { genre ->
                     TvButton(onClick = { onGenre(genre) }, selected = selectedGenreId == genre.id) {
-                        Text(genre.name, color = TextPrimary, fontSize = 13.sp)
+                        Text(genre.name, color = TextPrimary, fontSize = Fs.Body)
                     }
                 }
             }
         }
         if (cards.isEmpty() && !loadingMore) {
-            Text("Nothing to show.", color = Muted, modifier = Modifier.padding(top = 18.dp))
+            Text("Nothing here yet.", color = Muted, modifier = Modifier.padding(top = 18.dp))
         }
         LazyVerticalGrid(
             columns = GridCells.Adaptive(minSize = PosterWidth),
@@ -2600,7 +2660,7 @@ internal fun GridScreen(
     }
     FocusFirstWhenReady(cards.isNotEmpty() && focusedCardKey == null, firstCard)
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
-        Text(title, color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = TextPrimary, fontSize = Fs.Headline, fontWeight = FontWeight.Bold)
         if (cards.isEmpty()) {
             Text("Nothing here yet.", color = Muted, modifier = Modifier.padding(top = 18.dp))
         }
@@ -2712,11 +2772,11 @@ private fun SearchResultsRow(
     onLongCard: (MediaCard) -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = Gutter)) {
-        Text(title, color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text(title, color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
         if (cards.isEmpty()) {
             Text(
-                if (searching) "Searching…" else "No matches",
+                if (searching) "Searching…" else "No matches. Try a different title.",
                 color = Muted,
                 modifier = Modifier.padding(vertical = 12.dp),
             )
@@ -2759,7 +2819,7 @@ private fun SearchSuggestionCard(
         Text(
             card.title,
             color = TextPrimary,
-            fontSize = 14.sp,
+            fontSize = Fs.Body,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
@@ -2767,7 +2827,7 @@ private fun SearchSuggestionCard(
         val subtitle = card.sub?.takeIf { it.isNotBlank() }
             ?: listOfNotNull(card.year, card.rating?.let { "★ ${"%.1f".format(it)}" }).joinToString(" · ")
         if (subtitle.isNotBlank()) {
-            Text(subtitle, color = Muted, fontSize = 11.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(subtitle, color = Muted, fontSize = Fs.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -2880,7 +2940,7 @@ internal fun LiveScreen(
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
-            Text("Live TV", color = TextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            Text("Live TV", color = TextPrimary, fontSize = Fs.Headline, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(20.dp))
             TvButton(onRefresh) { Text("Refresh", color = TextPrimary) }
         }
@@ -2894,7 +2954,7 @@ internal fun LiveScreen(
             Column(
                 modifier = Modifier.width(220.dp).fillMaxSize().padding(end = 18.dp),
             ) {
-                Text("Categories", color = TextPrimary, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text("Categories", color = TextPrimary, fontSize = Fs.Subtitle, fontWeight = FontWeight.Bold)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize().padding(top = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -2912,7 +2972,7 @@ internal fun LiveScreen(
                                 .focusRequester(categoryRequesters[index]),
                             selected = category == activeCategory,
                         ) {
-                            Text(category, color = TextPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(category, color = TextPrimary, fontSize = Fs.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -2931,9 +2991,9 @@ internal fun LiveScreen(
                         label = { Text("Search channels") },
                         modifier = Modifier.width(360.dp),
                     )
-                    Text("${filteredChannels.size} channels", color = Muted, fontSize = 13.sp)
+                    Text("${filteredChannels.size} channels", color = Muted, fontSize = Fs.Body)
                 }
-                error?.let { Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 8.dp)) }
+                error?.let { Text(it, color = ErrorText, fontSize = Fs.Body, modifier = Modifier.padding(top = 8.dp)) }
                 if (filteredChannels.isEmpty()) {
                     Text("No channels match this search or category.", color = Muted, modifier = Modifier.padding(top = 20.dp))
                 }
@@ -2966,14 +3026,14 @@ internal fun LiveScreen(
                             .onFocusChanged { if (it.isFocused) focusedChannelId = channel.channelId }
                         Column {
                         TvCard({ onPlay(channel) }, tileModifier, contentPadding = PaddingValues(10.dp)) {
-                                                    Text("📺", fontSize = 24.sp)
+                                                    Icon(painterResource(R.drawable.ic_nav_live_tv), contentDescription = null, tint = Purple, modifier = Modifier.size(28.dp))
                                                     Spacer(Modifier.height(4.dp))
-                                                    Text(channel.name, color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text(channel.name, color = TextPrimary, fontSize = Fs.BodyLarge, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                     channel.nowPlaying?.let { programme ->
                                                         Text(
                                                             "NOW ${programme.title}",
                                                             color = Purple,
-                                                            fontSize = 13.sp,
+                                                            fontSize = Fs.Body,
                                                             fontWeight = FontWeight.SemiBold,
                                                             maxLines = 1,
                                                             overflow = TextOverflow.Ellipsis,
@@ -2981,9 +3041,9 @@ internal fun LiveScreen(
                                                         ProgrammeProgress(programme)
                                                     }
                                                     channel.nextPlaying?.title?.takeIf { it.isNotBlank() }?.let { next ->
-                                                        Text("NEXT $next", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                        Text("NEXT $next", color = Muted, fontSize = Fs.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                     }
-                                                    Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                                    Text("${channel.genre} · ${channel.country}", color = Muted, fontSize = Fs.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                                 }
                                                 val pinned = isFavourite(favouriteIds, channel)
                                                 TvButton(
@@ -2994,11 +3054,12 @@ internal fun LiveScreen(
                                                             contentDescription = if (pinned) "Remove from favourites" else "Add to favourites"
                                                         },
                                                 ) {
-                                                    Text(
-                                                        if (pinned) "★ Favourite" else "☆ Favourite",
+                                                    IconText(
+                                                        if (pinned) R.drawable.ic_star else R.drawable.ic_star_border,
+                                                        "Favourite",
                                                         color = if (pinned) Purple else Muted,
-                                                        fontSize = 12.sp,
-                                                                                                            )
+                                                        fontSize = Fs.Caption,
+                                                    )
                                                                                                         }
                                                                                 }
                     }
@@ -3056,12 +3117,12 @@ internal fun DetailScreen(
             item {
                 Column {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                        Text("‹ Back", color = TextPrimary, fontSize = 15.sp)
+                        IconText(R.drawable.ic_arrow_back, "Back", color = TextPrimary, fontSize = Fs.BodyLarge)
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text(detail.title, color = TextPrimary, fontSize = 40.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(detail.title, color = TextPrimary, fontSize = Fs.Hero, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     detail.tagline?.takeIf { it.isNotBlank() }?.let {
-                        Text(it, color = Muted, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(it, color = Muted, fontSize = Fs.BodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -3071,38 +3132,43 @@ internal fun DetailScreen(
                             detail.releaseDate?.let { formatReleaseDate(it)?.let { date -> "Released $date" } },
                             detail.rating?.let { "${(it * 10).toInt()}% Match" },
                         ).joinToString(" · "),
-                        color = Muted, fontSize = 14.sp,
+                        color = Muted, fontSize = Fs.Body,
                     )
                     if (detail.genres.isNotEmpty()) {
                         Text(
                             "Genre · ${detail.genres.joinToString(" · ")}",
                             color = Purple,
-                            fontSize = 14.sp,
+                            fontSize = Fs.Body,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                     Spacer(Modifier.height(12.dp))
-                    Text(detail.overview, color = TextPrimary.copy(alpha = 0.85f), fontSize = 15.sp, modifier = Modifier.width(820.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    Text(detail.overview, color = TextPrimary.copy(alpha = 0.85f), fontSize = Fs.BodyLarge, modifier = Modifier.width(820.dp), maxLines = 4, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(16.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                         TvButton(onPlay, Modifier.focusRequester(playFocus), primary = true) {
-                            Text(
+                            IconText(
+                                R.drawable.ic_play,
                                 if (detail.mediaType == "tv" && detail.resumeSeason != null && detail.resumeEpisode != null)
-                                    "▶ Resume S${detail.resumeSeason}E${detail.resumeEpisode}"
-                                else "▶ Play",
-                                fontSize = 15.sp,
+                                    "Resume S${detail.resumeSeason}E${detail.resumeEpisode}"
+                                else "Play",
+                                fontSize = Fs.BodyLarge,
                             )
                         }
                         TvButton(onList) {
-                            Text(if (detail.inMyList) "✓ My List" else "+ My List", color = TextPrimary, fontSize = 15.sp)
+                            IconText(if (detail.inMyList) R.drawable.ic_check else R.drawable.ic_add, "My List", color = TextPrimary, fontSize = Fs.BodyLarge)
                         }
                         TvButton(onTrailer) {
-                            Text("▶ Trailer", color = TextPrimary, fontSize = 15.sp)
+                            IconText(R.drawable.ic_play, "Trailer", color = TextPrimary, fontSize = Fs.BodyLarge)
                         }
-                        TvButton({ onRate(if (detail.myRating == "up") null else "up") }) { Text("👍") }
-                        TvButton({ onRate(if (detail.myRating == "down") null else "down") }) { Text("👎") }
+                        TvButton({ onRate(if (detail.myRating == "up") null else "up") }, Modifier.semantics { contentDescription = "Like" }, selected = detail.myRating == "up") {
+                            Icon(painterResource(R.drawable.ic_thumb_up), contentDescription = null, tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        }
+                        TvButton({ onRate(if (detail.myRating == "down") null else "down") }, Modifier.semantics { contentDescription = "Dislike" }, selected = detail.myRating == "down") {
+                            Icon(painterResource(R.drawable.ic_thumb_down), contentDescription = null, tint = TextPrimary, modifier = Modifier.size(20.dp))
+                        }
                     }
                     // What a viewer wants before committing: the time this is over,
                     // from the saved position, or the episode Resume/Play would open.
@@ -3113,14 +3179,14 @@ internal fun DetailScreen(
                         Text(
                             caption,
                             color = TextPrimary,
-                            fontSize = 15.sp,
+                            fontSize = Fs.BodyLarge,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
                     error?.let {
-                        Text(it, color = ErrorText, fontSize = 14.sp, modifier = Modifier.padding(top = 12.dp))
+                        Text(it, color = ErrorText, fontSize = Fs.Body, modifier = Modifier.padding(top = 12.dp))
                     }
                 }
             }
@@ -3140,7 +3206,7 @@ internal fun DetailScreen(
                         if (detail.mediaType == "tv" && detail.seasons.isNotEmpty()) {
                 item {
                     Column {
-                        Text("Episodes", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Episodes", color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(10.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             items(detail.seasons) { season ->
@@ -3170,7 +3236,7 @@ internal fun DetailScreen(
             if (detail.cast.isNotEmpty()) {
                 item {
                     Column {
-                        Text("Cast", color = TextPrimary, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Text("Cast", color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(10.dp))
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                             items(detail.cast) { person -> CastCard(person) { onPerson(person) } }
@@ -3180,11 +3246,11 @@ internal fun DetailScreen(
             }
         }
 
-        // Top-right clock, mirroring the "‹ Back" affordance on the left.
+        // Top-right clock, mirroring the Back affordance on the left.
         Text(
             rememberWallClock(),
             color = TextPrimary,
-            fontSize = 16.sp,
+            fontSize = Fs.BodyLarge,
             fontWeight = FontWeight.SemiBold,
             modifier = Modifier.align(Alignment.TopEnd).padding(top = 26.dp, end = 60.dp),
         )
@@ -3230,22 +3296,22 @@ private fun EpisodeRow(episode: Episode, onClick: () -> Unit) {
                         color = Color.Black.copy(alpha = 0.78f),
                         shape = RoundedCornerShape(3.dp),
                     ) {
-                        Text("WATCHED", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp))
+                        Text("WATCHED", color = Color.White, fontSize = Fs.Caption, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 5.dp, vertical = 3.dp))
                     }
                 }
             }
             Column(Modifier.padding(start = 16.dp).weight(1f)) {
                 Text(
                     "${episode.number}. ${episode.name}",
-                    color = TextPrimary, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    color = TextPrimary, fontSize = Fs.BodyLarge, fontWeight = FontWeight.SemiBold,
                     maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
                 episode.airDate?.let { date ->
-                    Text("Release date: ${formatReleaseDate(date) ?: date}", color = Purple, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("Release date: ${formatReleaseDate(date) ?: date}", color = Purple, fontSize = Fs.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 episode.overview?.takeIf { it.isNotBlank() }?.let {
                     Spacer(Modifier.height(4.dp))
-                    Text(it, color = Muted, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(it, color = Muted, fontSize = Fs.Caption, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -3265,9 +3331,9 @@ private fun CastCard(person: Person, onClick: () -> Unit = {}) {
             contentScale = ContentScale.Crop,
         )
         Spacer(Modifier.height(8.dp))
-        Text(person.name, color = TextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Text(person.name, color = TextPrimary, fontSize = Fs.Caption, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (person.character.isNotBlank()) {
-            Text(person.character, color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(person.character, color = Muted, fontSize = Fs.Caption, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -3298,29 +3364,28 @@ private fun CardActionMenu(
         shadowElevation = 18.dp,
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(card.title, color = TextPrimary, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text("Card actions", color = Muted, fontSize = 12.sp)
+            Text(card.title, color = TextPrimary, fontSize = Fs.Subtitle, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
             TvButton(
                 onClick = onToggleList,
                 primary = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(firstFocus),
             ) {
-                Text(if (inMyList) "Remove from My List" else "Add to My List", fontSize = 14.sp)
+                Text(if (inMyList) "Remove from My List" else "Add to My List", fontSize = Fs.Body)
             }
             if (isMovie) {
                 TvButton(onClick = onMarkWatched, modifier = Modifier.fillMaxWidth()) {
-                    Text("Mark as watched", color = TextPrimary, fontSize = 14.sp)
+                    Text("Mark as watched", color = TextPrimary, fontSize = Fs.Body)
                 }
                 TvButton(onClick = onRemoveProgress, modifier = Modifier.fillMaxWidth()) {
-                    Text("Mark as unwatched", color = TextPrimary, fontSize = 14.sp)
+                    Text("Mark as unwatched", color = TextPrimary, fontSize = Fs.Body)
                 }
             } else if (canRemoveProgress) {
                 TvButton(onClick = onRemoveProgress, modifier = Modifier.fillMaxWidth()) {
-                    Text("Reset progress (mark as unwatched)", color = TextPrimary, fontSize = 14.sp)
+                    Text("Mark show as unwatched", color = TextPrimary, fontSize = Fs.Body)
                 }
             }
             TvButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
-                Text("Cancel", color = TextPrimary, fontSize = 14.sp)
+                Text("Cancel", color = TextPrimary, fontSize = Fs.Body)
             }
         }
     }
@@ -3363,49 +3428,49 @@ internal fun UpdatesScreen(
             .testTag("updates-content"),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("App updates", color = TextPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("Installed version $currentVersion", color = Muted, fontSize = 15.sp)
+        Text("App updates", color = TextPrimary, fontSize = Fs.Display, fontWeight = FontWeight.Bold)
+        Text("Installed version $currentVersion", color = Muted, fontSize = Fs.BodyLarge)
         if (storage != null) {
             Text(
                 "Storage: ${formatStorageSize(storage.first)} free of ${formatStorageSize(storage.second)}",
                 color = if (low) ErrorText else Muted,
-                fontSize = 15.sp,
+                fontSize = Fs.BodyLarge,
             )
             if (low) {
                 Text(
                     "Storage is nearly full, so Android may refuse to install an update. " +
                         "Uninstall an unused app or clear its data first.",
                     color = ErrorText,
-                    fontSize = 13.sp,
+                    fontSize = Fs.Body,
                     modifier = Modifier.widthIn(max = 620.dp),
                 )
             }
         }
         when {
             available != null -> {
-                Text("Version ${available.versionName} is available", color = TextPrimary, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
+                Text("Version ${available.versionName} is available", color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.SemiBold)
                 if (available.releaseNotes.isNotBlank()) {
-                    Text(available.releaseNotes.take(600), color = Muted, fontSize = 14.sp, maxLines = 8, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
+                    Text(available.releaseNotes.take(600), color = Muted, fontSize = Fs.Body, maxLines = 8, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
                 }
             }
-            checkMessage != null -> Text(checkMessage, color = Muted, fontSize = 15.sp)
+            checkMessage != null -> Text(checkMessage, color = Muted, fontSize = Fs.BodyLarge)
         }
-        if (error != null) Text(error, color = ErrorText, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
+        if (error != null) Text(error, color = ErrorText, fontSize = Fs.Body, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 620.dp))
         if (busy || checking) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CircularProgressIndicator(Modifier.size(22.dp), color = Purple, strokeWidth = 2.dp)
-                Text(if (busy) "Downloading update…" else "Checking for updates…", color = Muted, fontSize = 14.sp)
+                Text(if (busy) "Downloading update…" else "Checking for updates…", color = Muted, fontSize = Fs.Body)
             }
         } else {
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (available != null) {
                     TvButton(onClick = onInstall, primary = true, modifier = Modifier.focusRequester(primaryFocus)) {
-                        Text("Install ${available.versionName}", fontSize = 14.sp)
+                        Text("Install ${available.versionName}", fontSize = Fs.Body)
                     }
-                    TvButton(onClick = onCheck) { Text("Check again", color = TextPrimary, fontSize = 14.sp) }
+                    TvButton(onClick = onCheck) { Text("Check again", color = TextPrimary, fontSize = Fs.Body) }
                 } else {
                     TvButton(onClick = onCheck, primary = true, modifier = Modifier.focusRequester(primaryFocus)) {
-                        Text("Check for updates", fontSize = 14.sp)
+                        Text("Check for updates", fontSize = Fs.Body)
                     }
                 }
             }
@@ -3416,17 +3481,17 @@ internal fun UpdatesScreen(
             Text(
                 if (profileName.isNullOrBlank()) "Preferred source" else "Preferred source for $profileName",
                 color = TextPrimary,
-                fontSize = 20.sp,
+                fontSize = Fs.Title,
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "Which backend this profile should stream from first. Automatic lets the server choose.",
+                "Pick which source this profile tries first. Automatic lets Streammore choose.",
                 color = Muted,
-                fontSize = 13.sp,
+                fontSize = Fs.Body,
                 modifier = Modifier.widthIn(max = 620.dp),
             )
             if (sourceRows.isEmpty()) {
-                Text("This server did not offer any sources.", color = Muted, fontSize = 13.sp)
+                Text("This server did not offer any sources.", color = Muted, fontSize = Fs.Body)
             } else {
                 sourceRows.forEach { row ->
                     PreferredSourceRowItem(row = row, enabled = !saving, onSelect = { onSelectSource(row.key) })
@@ -3468,12 +3533,12 @@ private fun PreferredSourceRowItem(row: PreferredSourceRow, enabled: Boolean, on
         Text(
             row.label,
             color = if (row.disabled) Muted.copy(alpha = 0.55f) else TextPrimary,
-            fontSize = 15.sp,
+            fontSize = Fs.BodyLarge,
             fontWeight = if (row.selected) FontWeight.SemiBold else FontWeight.Normal,
             modifier = Modifier.weight(1f),
         )
-        row.note?.let { Text(it, color = Muted, fontSize = 12.sp) }
-        if (row.selected) Text("Current", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+        row.note?.let { Text(it, color = Muted, fontSize = Fs.Caption) }
+        if (row.selected) Text("Current", color = Purple, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -3504,16 +3569,15 @@ private fun UpdatePrompt(
         shadowElevation = 18.dp,
     ) {
         Column(Modifier.padding(26.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("STREAMMORE UPDATE", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            Text("Version ${update.versionName} is available", color = TextPrimary, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+            Text("Version ${update.versionName} is available", color = TextPrimary, fontSize = Fs.Headline, fontWeight = FontWeight.SemiBold)
             if (update.releaseNotes.isNotBlank()) {
-                Text(update.releaseNotes.take(500), color = Muted, fontSize = 14.sp, maxLines = 6, overflow = TextOverflow.Ellipsis)
+                Text(update.releaseNotes.take(500), color = Muted, fontSize = Fs.Body, maxLines = 6, overflow = TextOverflow.Ellipsis)
             }
-            if (error != null) Text(error, color = ErrorText, fontSize = 13.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (error != null) Text(error, color = ErrorText, fontSize = Fs.Body, maxLines = 3, overflow = TextOverflow.Ellipsis)
             if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     CircularProgressIndicator(Modifier.size(22.dp), color = Purple, strokeWidth = 2.dp)
-                    Text("Downloading update…", color = Muted, fontSize = 14.sp)
+                    Text("Downloading update…", color = Muted, fontSize = Fs.Body)
                 }
             } else {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -3521,8 +3585,8 @@ private fun UpdatePrompt(
                         onClick = onUpdate,
                         primary = true,
                         modifier = Modifier.focusRequester(updateFocus),
-                    ) { Text("Update now", fontSize = 14.sp) }
-                    TvButton(onClick = onLater) { Text("Later", color = TextPrimary, fontSize = 14.sp) }
+                    ) { Text("Update now", fontSize = Fs.Body) }
+                    TvButton(onClick = onLater) { Text("Later", color = TextPrimary, fontSize = Fs.Body) }
                 }
             }
         }
@@ -3530,16 +3594,42 @@ private fun UpdatePrompt(
 }
 
 @Composable
-internal fun ErrorBanner(message: String, modifier: Modifier = Modifier) {
+internal fun ErrorBanner(message: String, modifier: Modifier = Modifier, onRetry: (() -> Unit)? = null) {
+    val retryFocus = remember { FocusRequester() }
+    LaunchedEffect(message, onRetry != null) {
+        if (onRetry != null) {
+            delay(150)
+            runCatching { retryFocus.requestFocus() }
+        }
+    }
     Surface(modifier.padding(28.dp), color = ErrorFill, shape = RoundedCornerShape(8.dp)) {
-        Text(
-            message,
-            color = Color.White,
-            fontSize = 14.sp,
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
-            maxLines = 3,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Row(
+            Modifier.padding(horizontal = 18.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Text(
+                message,
+                color = Color.White,
+                fontSize = Fs.Body,
+                modifier = Modifier.weight(1f, fill = false),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (onRetry != null) {
+                TvButton(onClick = onRetry, primary = true, modifier = Modifier.focusRequester(retryFocus)) {
+                    Text("Retry", fontSize = Fs.Body)
+                }
+            }
+        }
+    }
+}
+
+/** A short, non-focusable tip. Dismisses itself, so it never steals the D-pad. */
+@Composable
+internal fun HintBanner(message: String, modifier: Modifier = Modifier) {
+    Surface(modifier.padding(28.dp), color = Panel, shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
+        Text(message, color = TextPrimary, fontSize = Fs.Body, modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
     }
 }
 
@@ -3547,7 +3637,7 @@ internal fun ErrorBanner(message: String, modifier: Modifier = Modifier) {
 internal fun LoadingScreen(error: String?) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         if (error == null) CircularProgressIndicator(color = Purple)
-        else Text(error, color = ErrorText, fontSize = 15.sp)
+        else Text(error, color = ErrorText, fontSize = Fs.BodyLarge)
     }
 }
 
@@ -3735,7 +3825,7 @@ internal fun PlayerScreen(
                             onSelectSource(next, resumePositionForFallback(position, initialPositionMs))
                             return
                         }
-                        playerError = "Playback network error: ${error.errorCodeName} (${error.message ?: "unknown error"})"
+                        playerError = "Playback stopped. Check your connection and press OK to retry."
                         Log.e("StreammorePlayer", "Playback failed for ${Uri.parse(source).host}:${Uri.parse(source).port}", error)
                     }
                     override fun onIsPlayingChanged(playing: Boolean) {
@@ -4160,7 +4250,7 @@ internal fun PlayerScreen(
             Text(
                 formatWallClock(clockMs),
                 color = Color.White,
-                fontSize = 16.sp,
+                fontSize = Fs.BodyLarge,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 style = TextStyle(shadow = Shadow(color = Color.Black, blurRadius = 8f)),
@@ -4184,17 +4274,16 @@ internal fun PlayerScreen(
                 verticalAlignment = Alignment.Top,
             ) {
                 TextButton(onClick = onBack, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)) {
-                    Text("←", color = Color.White, fontSize = 26.sp)
+                    Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back", tint = Color.White, modifier = Modifier.size(28.dp))
                 }
                 Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                    Text("NOW PLAYING", color = Purple, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
                     // The row reserves the clock's corner on its right, so a long title
                     // ellipsises instead of running underneath it.
-                    Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(title, color = Color.White, fontSize = Fs.Subtitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
                         if (season != null && episode != null) "S${season}E${episode} · Streammore" else "Streammore",
                         color = Muted,
-                        fontSize = 13.sp,
+                        fontSize = Fs.Body,
                     )
                 }
             }
@@ -4205,13 +4294,13 @@ internal fun PlayerScreen(
                 if (chromeSkipTarget != null) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         TvButton(onClick = { skipActiveSegment(chromeSkipTarget) }) {
-                            Text(chromeSkipTarget.label, color = TextPrimary, fontSize = 14.sp)
+                            Text(chromeSkipTarget.label, color = TextPrimary, fontSize = Fs.Body)
                         }
                     }
                     Spacer(Modifier.height(8.dp))
                 }
                 liveProgramTitle?.takeIf { it.isNotBlank() }?.let {
-                    Text("ON NOW · $it", color = Purple, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text("ON NOW · $it", color = Purple, fontSize = Fs.Body, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Spacer(Modifier.height(4.dp))
                 }
                 liveNextProgramTitle?.takeIf { it.isNotBlank() }?.let { next ->
@@ -4219,7 +4308,7 @@ internal fun PlayerScreen(
                     Text(
                         "UP NEXT · $next${scheduled?.let { " · $it" } ?: ""}",
                         color = Muted,
-                        fontSize = 13.sp,
+                        fontSize = Fs.Body,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -4229,7 +4318,7 @@ internal fun PlayerScreen(
                     // Directly above the seek bar: what time this is over from where
                     // the viewer is now, so they can decide whether to finish it.
                     playbackFinishCaption(clockMs, playbackPosition, playbackDuration)?.let { caption ->
-                        Text(caption, color = Color(0xFFE0DCE6), fontSize = 14.sp, maxLines = 1)
+                        Text(caption, color = TextPrimary, fontSize = Fs.Body, maxLines = 1)
                         Spacer(Modifier.height(2.dp))
                     }
                     Slider(
@@ -4267,18 +4356,18 @@ internal fun PlayerScreen(
                             .focusProperties { up = seekFocus }
                             .onFocusChanged { if (it.isFocused) { chromeVisible = true; interactionTick++ } },
                     ) {
-                        Text(if (isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = 25.sp)
+                        Text(if (isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = Fs.Headline)
                     }
                     TextButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = keepControlsVisible()) {
-                        Text("↶10", color = Color.White, fontSize = 15.sp)
+                        Text("↶10", color = Color.White, fontSize = Fs.BodyLarge)
                     }
                     TextButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }, modifier = keepControlsVisible()) {
-                        Text("10↷", color = Color.White, fontSize = 15.sp)
+                        Text("10↷", color = Color.White, fontSize = Fs.BodyLarge)
                     }
                     Text(
                         "${formatPlayerTime(playbackPosition)} / ${formatPlayerTime(playbackDuration)}",
-                        color = Color(0xFFE0DCE6),
-                        fontSize = 13.sp,
+                        color = TextPrimary,
+                        fontSize = Fs.Body,
                     )
                     Spacer(Modifier.weight(1f))
                     if (subtitles.isNotEmpty()) {
@@ -4289,7 +4378,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             sourceMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = Fs.Body) }
                     }
                     AudioTrackSelectorButton(
                         onClick = {
@@ -4310,7 +4399,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible()) { Text("☰ Sources", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { IconText(R.drawable.ic_sources, "Sources", color = Color.White, fontSize = Fs.Body) }
                     }
                     if (episodeList.isNotEmpty()) {
                         TextButton(onClick = {
@@ -4320,10 +4409,10 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             sourceMenuOpen = false
-                        }, modifier = keepControlsVisible()) { Text("▣ Episodes", color = Color.White, fontSize = 13.sp) }
+                        }, modifier = keepControlsVisible()) { IconText(R.drawable.ic_episodes, "Episodes", color = Color.White, fontSize = Fs.Body) }
                     }
                     if (season != null && episode != null) {
-                        TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = 13.sp) }
+                        TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = Fs.Body) }
                     }
                     TvButton(
                         onClick = {
@@ -4335,7 +4424,7 @@ internal fun PlayerScreen(
                             settingsMenuOpen = false
                         },
                         modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus)),
-                    ) { Text("▦ $selectedQualityLabel", color = TextPrimary, fontSize = 13.sp) }
+                    ) { IconText(R.drawable.ic_tune, selectedQualityLabel, color = TextPrimary, fontSize = Fs.Body) }
                     TvButton(
                         onClick = {
                             settingsMenuOpen = !settingsMenuOpen
@@ -4347,7 +4436,7 @@ internal fun PlayerScreen(
                         },
                         modifier = keepControlsVisible(),
                     ) {
-                        Text("⚙", color = TextPrimary, fontSize = 14.sp)
+                        Icon(painterResource(R.drawable.ic_settings), contentDescription = "Player settings", tint = TextPrimary, modifier = Modifier.size(20.dp))
                     }
                 }
             }
@@ -4359,7 +4448,7 @@ internal fun PlayerScreen(
                     border = BorderStroke(1.dp, BorderIdle),
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("VIDEO QUALITY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Video quality", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         TvButton(
                             onClick = { applyQuality(null) },
                             selected = selectedQualityLabel == "Auto",
@@ -4368,10 +4457,10 @@ internal fun PlayerScreen(
                                 .focusRequester(qualityOptionFocus)
                                 .focusProperties { up = qualityFocus },
                         ) {
-                            Text("Auto", color = TextPrimary, fontSize = 14.sp)
+                            Text("Auto", color = TextPrimary, fontSize = Fs.Body)
                         }
                         if (availableQualities.isEmpty()) {
-                            Text("Waiting for stream renditions…", color = Muted, fontSize = 12.sp)
+                            Text("Loading quality options…", color = Muted, fontSize = Fs.Caption)
                         } else {
                             availableQualities.forEachIndexed { index, quality ->
                                 TvButton(
@@ -4381,7 +4470,7 @@ internal fun PlayerScreen(
                                         .fillMaxWidth()
                                         .focusProperties { if (index == availableQualities.lastIndex) down = qualityFocus },
                                 ) {
-                                    Text(quality.label, color = TextPrimary, fontSize = 14.sp)
+                                    Text(quality.label, color = TextPrimary, fontSize = Fs.Body)
                                 }
                             }
                         }
@@ -4391,11 +4480,10 @@ internal fun PlayerScreen(
             if (settingsMenuOpen) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 240.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("PLAYER SETTINGS", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Player settings", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         TvButton(onClick = { autoNextEnabled = !autoNextEnabled }, selected = autoNextEnabled, modifier = Modifier.fillMaxWidth()) {
-                            Text("Auto-play next episode: ${if (autoNextEnabled) "On" else "Off"}", color = TextPrimary, fontSize = 14.sp)
+                            Text("Auto-play next episode: ${if (autoNextEnabled) "On" else "Off"}", color = TextPrimary, fontSize = Fs.Body)
                         }
-                        Text("Audio, quality and subtitles are available in the player bar.", color = Muted, fontSize = 12.sp)
                     }
                 }
             }
@@ -4403,6 +4491,7 @@ internal fun PlayerScreen(
                 AudioTrackSelectionMenu(
                     options = audioTracks.map { AudioTrackMenuOption(it.key, it.label) },
                     selectedKey = selectedAudioTrackKey,
+                    autoLabel = "Auto · ${languageDisplayName(normalizedLanguage(preferredAudioLanguage) ?: "en")} preferred",
                     tracksDiscovered = audioTracksDiscovered,
                     onSelect = { key -> applyAudioTrack(key?.let { selected -> audioTracks.firstOrNull { it.key == selected } }) },
                     buttonFocusRequester = audioTrackFocus,
@@ -4413,10 +4502,10 @@ internal fun PlayerScreen(
             if (subtitleMenuOpen) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 230.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("SUBTITLES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                        TvButton(onClick = { applySubtitle(null) }, selected = selectedSubtitle == null, modifier = Modifier.fillMaxWidth()) { Text("Off", color = TextPrimary, fontSize = 14.sp) }
+                        Text("Subtitles", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
+                        TvButton(onClick = { applySubtitle(null) }, selected = selectedSubtitle == null, modifier = Modifier.fillMaxWidth()) { Text("Off", color = TextPrimary, fontSize = Fs.Body) }
                         subtitles.forEach { track ->
-                            TvButton(onClick = { applySubtitle(track.language) }, selected = selectedSubtitle == track.language, modifier = Modifier.fillMaxWidth()) { Text(track.label, color = TextPrimary, fontSize = 14.sp) }
+                            TvButton(onClick = { applySubtitle(track.language) }, selected = selectedSubtitle == track.language, modifier = Modifier.fillMaxWidth()) { Text(track.label, color = TextPrimary, fontSize = Fs.Body) }
                         }
                     }
                 }
@@ -4424,10 +4513,10 @@ internal fun PlayerScreen(
             if (sourceMenuOpen) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 280.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("SOURCES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Sources", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         sources.forEachIndexed { index, sourceItem ->
                             TvButton(onClick = { onSelectSource(sourceItem, player.currentPosition); sourceMenuOpen = false }, selected = sourceItem.url == source, modifier = Modifier.fillMaxWidth()) {
-                                Text("${sourceItem.quality.ifBlank { "Source ${index + 1}" }} · ${sourceItem.name}", color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text("${sourceItem.quality.ifBlank { "Source ${index + 1}" }} · ${sourceItem.name}", color = TextPrimary, fontSize = Fs.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
                     }
@@ -4436,7 +4525,7 @@ internal fun PlayerScreen(
             if (episodeMenuOpen) {
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 330.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text("EPISODES", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text("Episodes", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         LazyColumn(Modifier.heightIn(max = 360.dp)) {
                             items(episodeList) { item ->
                                 TvButton(
@@ -4447,7 +4536,7 @@ internal fun PlayerScreen(
                                     Text(
                                         "${item.number}. ${item.name}${item.airDate?.let { " · ${formatReleaseDate(it) ?: it}" } ?: ""}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}",
                                         color = TextPrimary,
-                                        fontSize = 14.sp,
+                                        fontSize = Fs.Body,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
                                     )
@@ -4467,14 +4556,14 @@ internal fun PlayerScreen(
                 border = BorderStroke(1.dp, BorderIdle),
             ) {
                 Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("UP NEXT", color = Purple, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
-                    Text("${nextEpisode.season}x${nextEpisode.episode}  ${nextEpisode.title}", color = Color.White, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text("UP NEXT", color = Purple, fontSize = Fs.Caption, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                    Text("${nextEpisode.season}x${nextEpisode.episode}  ${nextEpisode.title}", color = Color.White, fontSize = Fs.Subtitle, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (nextEpisodeError != null) {
                         // Once the resolve has failed the countdown is meaningless,
                         // so the reason replaces it and Play next becomes the retry.
-                        Text(nextEpisodeError, color = Color(0xFFFFB4AB), fontSize = 14.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(nextEpisodeError, color = ErrorText, fontSize = Fs.Body, maxLines = 3, overflow = TextOverflow.Ellipsis)
                     } else {
-                        Text("Playing next in ${countdownSeconds.coerceAtLeast(0)}…", color = Muted, fontSize = 14.sp)
+                        Text("Playing next in ${countdownSeconds.coerceAtLeast(0)}…", color = Muted, fontSize = Fs.Body)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         TvButton(
@@ -4485,7 +4574,7 @@ internal fun PlayerScreen(
                                 .focusProperties { right = nextCloseFocus },
                             onFocusGained = { nextActionFocused = "play" },
                         ) {
-                            Text("▶ Play next", fontSize = 14.sp)
+                            IconText(R.drawable.ic_play, "Play next", fontSize = Fs.Body)
                         }
                         TvButton(
                             onClick = {
@@ -4497,7 +4586,7 @@ internal fun PlayerScreen(
                                 .focusProperties { left = nextFocus },
                             onFocusGained = { nextActionFocused = "close" },
                         ) {
-                            Text("Close", color = TextPrimary, fontSize = 14.sp)
+                            Text("Close", color = TextPrimary, fontSize = Fs.Body)
                         }
                     }
                 }
@@ -4524,7 +4613,7 @@ internal fun AudioTrackSelectorButton(
     modifier: Modifier = Modifier,
 ) {
     TextButton(onClick = onClick, modifier = modifier) {
-        Text("♪ Audio", color = Color.White, fontSize = 13.sp)
+        IconText(R.drawable.ic_audio, "Audio", color = Color.White, fontSize = Fs.Body)
     }
 }
 
@@ -4537,6 +4626,7 @@ internal fun AudioTrackSelectionMenu(
     buttonFocusRequester: FocusRequester,
     optionFocusRequester: FocusRequester,
     modifier: Modifier = Modifier,
+    autoLabel: String = "Auto · English preferred",
 ) {
     Surface(
         modifier = modifier.widthIn(min = 260.dp, max = 420.dp),
@@ -4548,7 +4638,7 @@ internal fun AudioTrackSelectionMenu(
             Modifier.padding(10.dp).heightIn(max = 360.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(5.dp),
         ) {
-            Text("AUDIO TRACKS", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("Audio tracks", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
             TvButton(
                 onClick = { onSelect(null) },
                 selected = selectedKey == null,
@@ -4557,12 +4647,12 @@ internal fun AudioTrackSelectionMenu(
                     .focusRequester(optionFocusRequester)
                     .focusProperties { up = buttonFocusRequester },
             ) {
-                Text("Auto · English preferred", color = TextPrimary, fontSize = 14.sp)
+                Text(autoLabel, color = TextPrimary, fontSize = Fs.Body)
             }
             if (!tracksDiscovered) {
-                Text("Detecting available audio tracks…", color = Muted, fontSize = 12.sp)
+                Text("Detecting available audio tracks…", color = Muted, fontSize = Fs.Caption)
             } else if (options.size <= 1) {
-                Text("No alternate audio tracks detected for this stream.", color = Muted, fontSize = 12.sp)
+                Text("No alternate audio tracks detected for this stream.", color = Muted, fontSize = Fs.Caption)
             }
             options.forEachIndexed { index, option ->
                 TvButton(
@@ -4572,7 +4662,7 @@ internal fun AudioTrackSelectionMenu(
                         .fillMaxWidth()
                         .focusProperties { if (index == options.lastIndex) down = buttonFocusRequester },
                 ) {
-                    Text(option.label, color = TextPrimary, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(option.label, color = TextPrimary, fontSize = Fs.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -4594,20 +4684,13 @@ internal fun SkipSegmentPrompt(
         border = BorderStroke(1.dp, BorderIdle),
     ) {
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(
-                if (target.label == "Skip recap") "RECAP DETECTED" else "INTRO DETECTED",
-                color = Purple,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.2.sp,
-            )
             TvButton(
                 onClick = onSkip,
                 primary = true,
                 modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                 onFocusGained = onFocusGained,
             ) {
-                Text(target.label, fontSize = 14.sp)
+                Text(target.label, fontSize = Fs.Body)
             }
         }
     }
@@ -4632,21 +4715,21 @@ internal fun UpcomingScreen(data: CalendarData?, error: String?, onEntry: (Calen
             .padding(horizontal = Gutter),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Upcoming", color = TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("Upcoming", color = TextPrimary, fontSize = Fs.Display, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(18.dp))
-            Text(calendarTotalLabel(data?.counts?.upcoming ?: 0), color = Muted, fontSize = 15.sp)
+            Text(calendarTotalLabel(data?.counts?.upcoming ?: 0), color = Muted, fontSize = Fs.BodyLarge)
         }
         Spacer(Modifier.height(6.dp))
         data?.let {
             Text(
-                "Air dates for the ${it.followed} shows you are watching · refreshed periodically.",
+                "${it.followed} shows you follow",
                 color = Muted,
-                fontSize = 14.sp,
+                fontSize = Fs.Body,
             )
         }
         if (error != null) {
             Spacer(Modifier.height(10.dp))
-            Text(error, color = Color(0xFFFF8A80), fontSize = 14.sp)
+            Text(error, color = ErrorText, fontSize = Fs.Body)
         }
         Spacer(Modifier.height(18.dp))
 
@@ -4654,7 +4737,7 @@ internal fun UpcomingScreen(data: CalendarData?, error: String?, onEntry: (Calen
             Text(
                 upcomingEmptyMessage(data?.followed ?: 0),
                 color = Muted,
-                fontSize = 16.sp,
+                fontSize = Fs.BodyLarge,
                 modifier = Modifier.padding(vertical = 40.dp).testTag("upcoming-empty"),
             )
             return@Column
@@ -4663,9 +4746,9 @@ internal fun UpcomingScreen(data: CalendarData?, error: String?, onEntry: (Calen
         var first = true
         sections.forEach { section ->
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(section.title, color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                Text(section.title, color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.width(10.dp))
-                Text(calendarTotalLabel(section.count), color = Muted, fontSize = 13.sp)
+                Text(calendarTotalLabel(section.count), color = Muted, fontSize = Fs.Body)
             }
             Spacer(Modifier.height(8.dp))
             section.entries.forEach { entry ->
@@ -4707,7 +4790,7 @@ private fun UpcomingEntryCard(
                 Text(
                     entry.title,
                     color = TextPrimary,
-                    fontSize = 16.sp,
+                    fontSize = Fs.BodyLarge,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -4716,12 +4799,12 @@ private fun UpcomingEntryCard(
                 val episodeName = entry.episode?.name.orEmpty()
                 val line = listOf(code, episodeName).filter { it.isNotBlank() }.joinToString(" · ")
                 if (line.isNotBlank()) {
-                    Text(line, color = TextPrimary, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(line, color = TextPrimary, fontSize = Fs.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text(
                     "${calendarDayLabel(entry.episode?.airDate, entry.episode?.dayIndex ?: 0)} · ${entry.episode?.airDate.orEmpty()}",
                     color = if (aired) Muted else Purple,
-                    fontSize = 12.5.sp,
+                    fontSize = Fs.Caption,
                 )
             }
         }
@@ -4742,7 +4825,7 @@ internal fun PersonScreen(
 
     Column(Modifier.fillMaxSize().padding(horizontal = Gutter)) {
         TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-            Text("‹ Back", color = Muted, fontSize = 14.sp)
+            IconText(R.drawable.ic_arrow_back, "Back", color = Muted, fontSize = Fs.Body)
         }
         LazyColumn(Modifier.testTag("person-content")) {
             item {
@@ -4756,25 +4839,25 @@ internal fun PersonScreen(
                         contentScale = ContentScale.Crop,
                     )
                     Column(Modifier.padding(start = 22.dp)) {
-                        Text(person.name, color = TextPrimary, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+                        Text(person.name, color = TextPrimary, fontSize = Fs.Display, fontWeight = FontWeight.Bold)
                         val facts = personFacts(person)
                         if (facts.isNotBlank()) {
                             Spacer(Modifier.height(6.dp))
-                            Text(facts, color = Muted, fontSize = 14.sp)
+                            Text(facts, color = Muted, fontSize = Fs.Body)
                         }
                         if (person.biography.isNotBlank()) {
                                         Spacer(Modifier.height(10.dp))
                                         Text(
                                             clampBiography(person.biography, expanded),
                                             color = TextPrimary,
-                                            fontSize = 13.5.sp,
+                                            fontSize = Fs.Body,
                                             maxLines = if (expanded) Int.MAX_VALUE else 6,
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                         if (person.biography.length > BiographyClamp) {
                                             Spacer(Modifier.height(6.dp))
                                             TvButton(onClick = { expanded = !expanded }) {
-                                                Text(if (expanded) "Show less" else "Read more", fontSize = 12.5.sp)
+                                                Text(if (expanded) "Show less" else "Read more", fontSize = Fs.Caption)
                                             }
                                         }
                                     }
@@ -4782,13 +4865,13 @@ internal fun PersonScreen(
                 }
             }
             if (error != null) {
-                item { Text(error, color = Color(0xFFFF8A80), fontSize = 14.sp) }
+                item { Text(error, color = ErrorText, fontSize = Fs.Body) }
             }
             if (person.movies.isNotEmpty()) {
                 item {
                     Column {
                         Spacer(Modifier.height(20.dp))
-                        Text("Movies (${person.movies.size})", color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("Movies (${person.movies.size})", color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(10.dp))
                         PersonCreditGrid(person.movies, onCard)
                     }
@@ -4798,7 +4881,7 @@ internal fun PersonScreen(
                 item {
                     Column {
                         Spacer(Modifier.height(20.dp))
-                        Text("TV Shows (${person.shows.size})", color = TextPrimary, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                        Text("TV Shows (${person.shows.size})", color = TextPrimary, fontSize = Fs.Title, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.height(10.dp))
                         PersonCreditGrid(person.shows, onCard)
                     }
@@ -4840,11 +4923,11 @@ private fun CollectionRow(
             Text(
                 title.ifBlank { "Collection" },
                 color = TextPrimary,
-                fontSize = 21.sp,
+                fontSize = Fs.Title,
                 fontWeight = FontWeight.Bold,
             )
             Spacer(Modifier.width(12.dp))
-            Text("${parts.size} films", color = Muted, fontSize = 13.sp)
+            Text("${parts.size} films", color = Muted, fontSize = Fs.Body)
         }
         Spacer(Modifier.height(10.dp))
         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -4859,7 +4942,7 @@ private fun CollectionRow(
                     Text(
                         if (current) "You are here" else collectionMeta(part),
                         color = if (current) Purple else Muted,
-                        fontSize = 11.5.sp,
+                        fontSize = Fs.Caption,
                         fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,

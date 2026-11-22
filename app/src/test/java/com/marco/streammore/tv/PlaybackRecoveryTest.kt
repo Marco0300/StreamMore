@@ -77,7 +77,7 @@ class PlaybackRecoveryTest {
     fun failureMessagesTellTheViewerWhatToDo() {
         val capacity = resolveFailureMessage("all-accounts-at-capacity")
         assertTrue(capacity.contains("busy", ignoreCase = true))
-        assertTrue(resolveFailureMessage("not-indexed").contains("catalogue", ignoreCase = true))
+        assertTrue(resolveFailureMessage("not-indexed").contains("available", ignoreCase = true))
         assertTrue(resolveFailureMessage("something-new").isNotBlank())
     }
 
