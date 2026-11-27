@@ -11,8 +11,8 @@ android {
         applicationId = "com.marco.streammore.tv"
         minSdk = 26
         targetSdk = 35
-        versionCode = 68
-        versionName = "1.18.23"
+        versionCode = 69
+        versionName = "1.18.24"
     }
 
     val releaseKeystore = System.getenv("STREAMMORE_RELEASE_KEYSTORE")

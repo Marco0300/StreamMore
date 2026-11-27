@@ -6,6 +6,8 @@ import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -121,5 +123,20 @@ class LanguageNameTest {
         org.junit.Assert.assertEquals("English", languageDisplayName("en"))
         org.junit.Assert.assertEquals("Spanish", languageDisplayName("spa"))
         org.junit.Assert.assertEquals("zzz", languageDisplayName("zzz"))
+    }
+}
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34])
+class NextEpisodeButtonTest {
+    @get:org.junit.Rule
+    val compose = androidx.compose.ui.test.junit4.createComposeRule()
+
+    @Test
+    fun skipsToTheNextEpisodeWhenClicked() {
+        var clicks = 0
+        compose.setContent { NextEpisodeButton(onClick = { clicks++ }) }
+        compose.onNodeWithText("Next episode").assertExists().performClick()
+        assertEquals(1, clicks)
     }
 }

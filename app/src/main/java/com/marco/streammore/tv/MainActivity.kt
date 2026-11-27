@@ -4356,13 +4356,21 @@ internal fun PlayerScreen(
                             .focusProperties { up = seekFocus }
                             .onFocusChanged { if (it.isFocused) { chromeVisible = true; interactionTick++ } },
                     ) {
-                        Text(if (isPlaying) "Ⅱ" else "▶", color = Color.White, fontSize = Fs.Headline)
+                        Icon(
+                            painterResource(if (isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                            contentDescription = if (isPlaying) "Pause" else "Play",
+                            tint = Color.White,
+                            modifier = Modifier.size(32.dp),
+                        )
                     }
                     TextButton(onClick = { player.seekTo((player.currentPosition - 10_000L).coerceAtLeast(0L)) }, modifier = keepControlsVisible()) {
-                        Text("↶10", color = Color.White, fontSize = Fs.BodyLarge)
+                        IconText(R.drawable.ic_replay, "10", modifier = Modifier.semantics { contentDescription = "Back 10 seconds" }, color = Color.White, fontSize = Fs.BodyLarge)
                     }
                     TextButton(onClick = { player.seekTo((player.currentPosition + 10_000L).coerceAtMost(player.duration.coerceAtLeast(0L))) }, modifier = keepControlsVisible()) {
-                        Text("10↷", color = Color.White, fontSize = Fs.BodyLarge)
+                        IconText(R.drawable.ic_forward, "10", modifier = Modifier.semantics { contentDescription = "Forward 10 seconds" }, color = Color.White, fontSize = Fs.BodyLarge)
+                    }
+                    if (nextEpisode != null) {
+                        NextEpisodeButton(onClick = { requestNextEpisode() }, modifier = keepControlsVisible())
                     }
                     Text(
                         "${formatPlayerTime(playbackPosition)} / ${formatPlayerTime(playbackDuration)}",
@@ -4604,6 +4612,14 @@ internal fun PlayerScreen(
             )
         }
         playerError?.let { ErrorBanner(it, Modifier.align(Alignment.BottomCenter)) }
+    }
+}
+
+/** Jumps straight to the next episode without waiting for the end of this one. */
+@Composable
+internal fun NextEpisodeButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(onClick = onClick, modifier = modifier) {
+        IconText(R.drawable.ic_skip_next, "Next episode", color = Color.White, fontSize = Fs.Body)
     }
 }
 

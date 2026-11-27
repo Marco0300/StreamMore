@@ -128,11 +128,8 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Home appears right away; your list and missing artwork fill in afterwards.
-            - Upcoming has its own icon, and text-character icons are now proper vector icons.
-            - Larger, consistent text sizes and better contrast on purple buttons.
-            - Load errors stay on screen with a Retry button; error messages are in plain language.
-            - The audio menu shows the language your profile prefers, and a one-time tip explains hold-OK options.
+            - Adds a "Next episode" button to the player controls to skip straight to the next episode.
+            - Play, pause and 10-second seek controls are now proper icons.
 
             SHA-256: `${{ env.SHA256 }}`
 
