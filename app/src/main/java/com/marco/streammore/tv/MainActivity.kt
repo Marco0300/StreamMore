@@ -3751,6 +3751,13 @@ internal fun PlayerScreen(
     val playFocus = remember(source) { FocusRequester() }
     val seekFocus = remember(source) { FocusRequester() }
     val episodeFocus = remember(source) { FocusRequester() }
+    val episodesButtonFocus = remember(source) { FocusRequester() }
+    val subtitleFocus = remember(source) { FocusRequester() }
+    val subtitleOptionFocus = remember(source) { FocusRequester() }
+    val sourceFocus = remember(source) { FocusRequester() }
+    val sourceOptionFocus = remember(source) { FocusRequester() }
+    val settingsFocus = remember(source) { FocusRequester() }
+    val settingsOptionFocus = remember(source) { FocusRequester() }
     val trackSelector = remember(source, audioSource) {
         DefaultTrackSelector(context).apply {
             // Xtream MKV files may list Russian/Ukrainian before English. Prefer
@@ -4034,24 +4041,54 @@ internal fun PlayerScreen(
         }
     }
 
+    // Opening a menu moves focus into it; closing one hands focus back to the button
+    // that opened it. Another menu opening at the same moment keeps the focus it took.
+    fun anyMenuOpen() = qualityMenuOpen || audioTrackMenuOpen || subtitleMenuOpen ||
+        sourceMenuOpen || episodeMenuOpen || settingsMenuOpen
+
     LaunchedEffect(episodeMenuOpen) {
-        if (episodeMenuOpen && episodeList.isNotEmpty()) {
-            delay(80)
-            episodeFocus.requestFocus()
+        delay(80)
+        runCatching {
+            if (episodeMenuOpen) {
+                if (episodeList.isNotEmpty()) episodeFocus.requestFocus()
+            } else if (!anyMenuOpen()) {
+                episodesButtonFocus.requestFocus()
+            }
         }
     }
 
     LaunchedEffect(qualityMenuOpen) {
         delay(80)
         runCatching {
-            if (qualityMenuOpen) qualityOptionFocus.requestFocus() else qualityFocus.requestFocus()
+            if (qualityMenuOpen) qualityOptionFocus.requestFocus() else if (!anyMenuOpen()) qualityFocus.requestFocus()
         }
     }
 
     LaunchedEffect(audioTrackMenuOpen) {
         delay(80)
         runCatching {
-            if (audioTrackMenuOpen) audioTrackOptionFocus.requestFocus() else audioTrackFocus.requestFocus()
+            if (audioTrackMenuOpen) audioTrackOptionFocus.requestFocus() else if (!anyMenuOpen()) audioTrackFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(subtitleMenuOpen) {
+        delay(80)
+        runCatching {
+            if (subtitleMenuOpen) subtitleOptionFocus.requestFocus() else if (!anyMenuOpen()) subtitleFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(sourceMenuOpen) {
+        delay(80)
+        runCatching {
+            if (sourceMenuOpen) sourceOptionFocus.requestFocus() else if (!anyMenuOpen()) sourceFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(settingsMenuOpen) {
+        delay(80)
+        runCatching {
+            if (settingsMenuOpen) settingsOptionFocus.requestFocus() else if (!anyMenuOpen()) settingsFocus.requestFocus()
         }
     }
 
@@ -4397,7 +4434,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             sourceMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible(label = if (selectedSubtitle == null) "Subtitles" else "Subtitles: $selectedSubtitle")) {
+                        }, modifier = keepControlsVisible(Modifier.focusRequester(subtitleFocus), label = if (selectedSubtitle == null) "Subtitles" else "Subtitles: $selectedSubtitle")) {
                             Icon(
                                 painterResource(R.drawable.ic_captions),
                                 contentDescription = "Subtitles",
@@ -4425,7 +4462,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible(label = "Sources")) {
+                        }, modifier = keepControlsVisible(Modifier.focusRequester(sourceFocus), label = "Sources")) {
                             Icon(painterResource(R.drawable.ic_sources), contentDescription = "Sources", tint = Color.White, modifier = Modifier.size(28.dp))
                         }
                     }
@@ -4437,7 +4474,7 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             sourceMenuOpen = false
-                        }, modifier = keepControlsVisible(label = "Episodes")) {
+                        }, modifier = keepControlsVisible(Modifier.focusRequester(episodesButtonFocus), label = "Episodes")) {
                             Icon(painterResource(R.drawable.ic_episodes), contentDescription = "Episodes", tint = Color.White, modifier = Modifier.size(28.dp))
                         }
                     }
@@ -4461,7 +4498,7 @@ internal fun PlayerScreen(
                             sourceMenuOpen = false
                             episodeMenuOpen = false
                         },
-                        modifier = keepControlsVisible(label = "Player settings"),
+                        modifier = keepControlsVisible(Modifier.focusRequester(settingsFocus), label = "Player settings"),
                     ) {
                         Icon(painterResource(R.drawable.ic_settings), contentDescription = "Player settings", tint = TextPrimary, modifier = Modifier.size(20.dp))
                     }
@@ -4508,7 +4545,7 @@ internal fun PlayerScreen(
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 240.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Player settings", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
-                        TvButton(onClick = { autoNextEnabled = !autoNextEnabled }, selected = autoNextEnabled, modifier = Modifier.fillMaxWidth()) {
+                        TvButton(onClick = { autoNextEnabled = !autoNextEnabled }, selected = autoNextEnabled, modifier = Modifier.fillMaxWidth().focusRequester(settingsOptionFocus)) {
                             Text("Auto-play next episode: ${if (autoNextEnabled) "On" else "Off"}", color = TextPrimary, fontSize = Fs.Body)
                         }
                     }
@@ -4530,9 +4567,9 @@ internal fun PlayerScreen(
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 230.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Subtitles", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
-                        TvButton(onClick = { applySubtitle(null) }, selected = selectedSubtitle == null, modifier = Modifier.fillMaxWidth()) { Text("Off", color = TextPrimary, fontSize = Fs.Body) }
+                        TvButton(onClick = { applySubtitle(null) }, selected = selectedSubtitle == null, modifier = Modifier.fillMaxWidth().then(if (selectedSubtitle == null) Modifier.focusRequester(subtitleOptionFocus) else Modifier)) { Text("Off", color = TextPrimary, fontSize = Fs.Body) }
                         subtitles.forEach { track ->
-                            TvButton(onClick = { applySubtitle(track.language) }, selected = selectedSubtitle == track.language, modifier = Modifier.fillMaxWidth()) { Text(track.label, color = TextPrimary, fontSize = Fs.Body) }
+                            TvButton(onClick = { applySubtitle(track.language) }, selected = selectedSubtitle == track.language, modifier = Modifier.fillMaxWidth().then(if (selectedSubtitle == track.language) Modifier.focusRequester(subtitleOptionFocus) else Modifier)) { Text(track.label, color = TextPrimary, fontSize = Fs.Body) }
                         }
                     }
                 }
@@ -4542,7 +4579,7 @@ internal fun PlayerScreen(
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Sources", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
                         sources.forEachIndexed { index, sourceItem ->
-                            TvButton(onClick = { onSelectSource(sourceItem, player.currentPosition); sourceMenuOpen = false }, selected = sourceItem.url == source, modifier = Modifier.fillMaxWidth()) {
+                            TvButton(onClick = { onSelectSource(sourceItem, player.currentPosition); sourceMenuOpen = false }, selected = sourceItem.url == source, modifier = Modifier.fillMaxWidth().then(if (sourceItem.url == source || (sources.none { it.url == source } && index == 0)) Modifier.focusRequester(sourceOptionFocus) else Modifier)) {
                                 Text("${sourceItem.quality.ifBlank { "Source ${index + 1}" }} · ${sourceItem.name}", color = TextPrimary, fontSize = Fs.Body, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
                         }
@@ -4553,12 +4590,14 @@ internal fun PlayerScreen(
                 Surface(Modifier.align(Alignment.BottomEnd).padding(end = 28.dp, bottom = 92.dp).widthIn(min = 330.dp), color = Panel.copy(alpha = 0.98f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, BorderIdle)) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                         Text("Episodes", color = Muted, fontSize = Fs.Caption, fontWeight = FontWeight.Bold)
-                        LazyColumn(Modifier.heightIn(max = 360.dp)) {
-                            items(episodeList) { item ->
+                        val currentIndex = episodeList.indexOfFirst { it.number == episode }.coerceAtLeast(0)
+                        val episodeListState = androidx.compose.foundation.lazy.rememberLazyListState(initialFirstVisibleItemIndex = currentIndex)
+                        LazyColumn(Modifier.heightIn(max = 360.dp), state = episodeListState) {
+                            itemsIndexed(episodeList) { index, item ->
                                 TvButton(
                                     onClick = { onSelectEpisode(item); episodeMenuOpen = false },
                                     selected = item.number == episode,
-                                    modifier = keepControlsVisible(Modifier.then(if (item.number == episodeList.firstOrNull()?.number) Modifier.focusRequester(episodeFocus) else Modifier)).fillMaxWidth(),
+                                    modifier = keepControlsVisible(Modifier.then(if (index == currentIndex) Modifier.focusRequester(episodeFocus) else Modifier)).fillMaxWidth(),
                                 ) {
                                     Text(
                                         "${item.number}. ${item.name}${item.airDate?.let { " · ${formatReleaseDate(it) ?: it}" } ?: ""}${if (item.watched) " · WATCHED" else if (item.progress > 0) " · ${(item.progress * 100).toInt()}%" else ""}",
