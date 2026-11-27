@@ -128,8 +128,10 @@ jobs:
           body: |
             ## Streammore TV v${{ env.TAG_VERSION }} — Release Notes
 
-            - Adds a "Next episode" button to the player controls to skip straight to the next episode.
-            - Play, pause and 10-second seek controls are now proper icons.
+            - The Next episode button is now an icon, and the player's control row is much shorter.
+            - The name of the focused control shows beside the icons.
+            - Controls stay on screen while a video is paused.
+            - Removed a do-nothing season and episode button from the control row; the title area now reads "Season 2 · Episode 4".
 
             SHA-256: `${{ env.SHA256 }}`
 

@@ -3691,6 +3691,10 @@ internal fun PlayerScreen(
 
     var playerError by remember(source) { mutableStateOf<String?>(null) }
     var chromeVisible by remember(source) { mutableStateOf(false) }
+    // The name of the control the D-pad is on, shown beside the icon-only buttons.
+    var focusedControl by remember(source) { mutableStateOf<String?>(null) }
+    // Paused by the viewer (not merely buffering): the controls stay up while paused.
+    var paused by remember(source) { mutableStateOf(false) }
     var interactionTick by remember(source) { mutableStateOf(0) }
     var qualityMenuOpen by remember(source) { mutableStateOf(false) }
     var subtitleMenuOpen by remember(source) { mutableStateOf(false) }
@@ -3831,6 +3835,10 @@ internal fun PlayerScreen(
                     override fun onIsPlayingChanged(playing: Boolean) {
                         isPlaying = playing
                         if (playing) playbackStarted = true
+                    }
+                    override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                        paused = !playWhenReady
+                        if (!playWhenReady) chromeVisible = true
                     }
                 })
                 val tracks = subtitles.map { item ->
@@ -4075,8 +4083,8 @@ internal fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(interactionTick, chromeVisible, qualityMenuOpen, subtitleMenuOpen, audioTrackMenuOpen, sourceMenuOpen, episodeMenuOpen, settingsMenuOpen) {
-        if (chromeVisible && !qualityMenuOpen && !subtitleMenuOpen && !audioTrackMenuOpen && !sourceMenuOpen && !episodeMenuOpen && !settingsMenuOpen) {
+    LaunchedEffect(interactionTick, chromeVisible, paused, qualityMenuOpen, subtitleMenuOpen, audioTrackMenuOpen, sourceMenuOpen, episodeMenuOpen, settingsMenuOpen) {
+        if (chromeVisible && !paused && !qualityMenuOpen && !subtitleMenuOpen && !audioTrackMenuOpen && !sourceMenuOpen && !episodeMenuOpen && !settingsMenuOpen) {
             delay(5_000)
             chromeVisible = false
         }
@@ -4172,10 +4180,13 @@ internal fun PlayerScreen(
         }
     }
 
-    fun keepControlsVisible(modifier: Modifier = Modifier): Modifier = modifier.onFocusChanged {
+    fun keepControlsVisible(modifier: Modifier = Modifier, label: String? = null): Modifier = modifier.onFocusChanged {
         if (it.isFocused) {
             chromeVisible = true
             interactionTick++
+            if (label != null) focusedControl = label
+        } else if (label != null && focusedControl == label) {
+            focusedControl = null
         }
     }
 
@@ -4280,11 +4291,9 @@ internal fun PlayerScreen(
                     // The row reserves the clock's corner on its right, so a long title
                     // ellipsises instead of running underneath it.
                     Text(title, color = Color.White, fontSize = Fs.Subtitle, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(
-                        if (season != null && episode != null) "S${season}E${episode} · Streammore" else "Streammore",
-                        color = Muted,
-                        fontSize = Fs.Body,
-                    )
+                    if (season != null && episode != null) {
+                        Text("Season $season · Episode $episode", color = Muted, fontSize = Fs.Body)
+                    }
                 }
             }
 
@@ -4370,14 +4379,16 @@ internal fun PlayerScreen(
                         IconText(R.drawable.ic_forward, "10", modifier = Modifier.semantics { contentDescription = "Forward 10 seconds" }, color = Color.White, fontSize = Fs.BodyLarge)
                     }
                     if (nextEpisode != null) {
-                        NextEpisodeButton(onClick = { requestNextEpisode() }, modifier = keepControlsVisible())
+                        NextEpisodeButton(onClick = { requestNextEpisode() }, modifier = keepControlsVisible(label = "Next episode"))
                     }
                     Text(
                         "${formatPlayerTime(playbackPosition)} / ${formatPlayerTime(playbackDuration)}",
                         color = TextPrimary,
                         fontSize = Fs.Body,
                     )
-                    Spacer(Modifier.weight(1f))
+                    Box(Modifier.weight(1f).padding(horizontal = 12.dp), contentAlignment = Alignment.CenterEnd) {
+                        focusedControl?.let { Text(it, color = Muted, fontSize = Fs.Body, maxLines = 1) }
+                    }
                     if (subtitles.isNotEmpty()) {
                         TextButton(onClick = {
                             subtitleMenuOpen = !subtitleMenuOpen
@@ -4386,7 +4397,14 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             sourceMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible()) { Text("CC${selectedSubtitle?.let { " $it" } ?: ""}", color = Color.White, fontSize = Fs.Body) }
+                        }, modifier = keepControlsVisible(label = if (selectedSubtitle == null) "Subtitles" else "Subtitles: $selectedSubtitle")) {
+                            Icon(
+                                painterResource(R.drawable.ic_captions),
+                                contentDescription = "Subtitles",
+                                tint = if (selectedSubtitle == null) Color.White else Purple,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
                     }
                     AudioTrackSelectorButton(
                         onClick = {
@@ -4397,7 +4415,7 @@ internal fun PlayerScreen(
                             episodeMenuOpen = false
                             settingsMenuOpen = false
                         },
-                        modifier = keepControlsVisible(Modifier.focusRequester(audioTrackFocus).widthIn(max = 100.dp)),
+                        modifier = keepControlsVisible(Modifier.focusRequester(audioTrackFocus), label = "Audio"),
                     )
                     if (sources.size > 1) {
                         TextButton(onClick = {
@@ -4407,7 +4425,9 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             episodeMenuOpen = false
-                        }, modifier = keepControlsVisible()) { IconText(R.drawable.ic_sources, "Sources", color = Color.White, fontSize = Fs.Body) }
+                        }, modifier = keepControlsVisible(label = "Sources")) {
+                            Icon(painterResource(R.drawable.ic_sources), contentDescription = "Sources", tint = Color.White, modifier = Modifier.size(28.dp))
+                        }
                     }
                     if (episodeList.isNotEmpty()) {
                         TextButton(onClick = {
@@ -4417,10 +4437,9 @@ internal fun PlayerScreen(
                             qualityMenuOpen = false
                             subtitleMenuOpen = false
                             sourceMenuOpen = false
-                        }, modifier = keepControlsVisible()) { IconText(R.drawable.ic_episodes, "Episodes", color = Color.White, fontSize = Fs.Body) }
-                    }
-                    if (season != null && episode != null) {
-                        TextButton(onClick = { }) { Text("S${season}E${episode}", color = Muted, fontSize = Fs.Body) }
+                        }, modifier = keepControlsVisible(label = "Episodes")) {
+                            Icon(painterResource(R.drawable.ic_episodes), contentDescription = "Episodes", tint = Color.White, modifier = Modifier.size(28.dp))
+                        }
                     }
                     TvButton(
                         onClick = {
@@ -4431,7 +4450,7 @@ internal fun PlayerScreen(
                             episodeMenuOpen = false
                             settingsMenuOpen = false
                         },
-                        modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus)),
+                        modifier = keepControlsVisible(Modifier.focusRequester(qualityFocus), label = "Video quality"),
                     ) { IconText(R.drawable.ic_tune, selectedQualityLabel, color = TextPrimary, fontSize = Fs.Body) }
                     TvButton(
                         onClick = {
@@ -4442,7 +4461,7 @@ internal fun PlayerScreen(
                             sourceMenuOpen = false
                             episodeMenuOpen = false
                         },
-                        modifier = keepControlsVisible(),
+                        modifier = keepControlsVisible(label = "Player settings"),
                     ) {
                         Icon(painterResource(R.drawable.ic_settings), contentDescription = "Player settings", tint = TextPrimary, modifier = Modifier.size(20.dp))
                     }
@@ -4619,7 +4638,7 @@ internal fun PlayerScreen(
 @Composable
 internal fun NextEpisodeButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(onClick = onClick, modifier = modifier) {
-        IconText(R.drawable.ic_skip_next, "Next episode", color = Color.White, fontSize = Fs.Body)
+        Icon(painterResource(R.drawable.ic_skip_next), contentDescription = "Next episode", tint = Color.White, modifier = Modifier.size(32.dp))
     }
 }
 
@@ -4629,7 +4648,7 @@ internal fun AudioTrackSelectorButton(
     modifier: Modifier = Modifier,
 ) {
     TextButton(onClick = onClick, modifier = modifier) {
-        IconText(R.drawable.ic_audio, "Audio", color = Color.White, fontSize = Fs.Body)
+        Icon(painterResource(R.drawable.ic_audio), contentDescription = "Audio tracks", tint = Color.White, modifier = Modifier.size(28.dp))
     }
 }
 

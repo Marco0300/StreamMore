@@ -836,7 +836,7 @@ class ScreenshotTest {
         }
         compose.waitForIdle()
 
-        compose.onNodeWithText("Audio").performClick()
+        compose.onNodeWithContentDescription("Audio tracks").performClick()
         check(clickCount == 1) { "the audio selector control should be visible and clickable before track metadata arrives" }
     }
 

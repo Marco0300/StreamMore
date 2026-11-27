@@ -6,6 +6,7 @@ import java.net.ServerSocket
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import org.json.JSONObject
@@ -136,7 +137,7 @@ class NextEpisodeButtonTest {
     fun skipsToTheNextEpisodeWhenClicked() {
         var clicks = 0
         compose.setContent { NextEpisodeButton(onClick = { clicks++ }) }
-        compose.onNodeWithText("Next episode").assertExists().performClick()
+        compose.onNodeWithContentDescription("Next episode").assertExists().performClick()
         assertEquals(1, clicks)
     }
 }
